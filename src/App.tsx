@@ -353,7 +353,10 @@ function Heats({ core, update }: { core: L.Core; update: Update }) {
                     </div>
                     <div className="bar" aria-hidden="true"><i style={{ width: `${Math.min(100, (n / cap) * 100)}%` }} className={over ? 'over' : ''} /></div>
                     <div className="meta">{n} מתוך {cap}{L.heatClasses(core, h).has('fast') ? ' · ⚡ מכוניות מהירות' : ''}{core.live?.heatId === h.id ? ' · נעול בזמן שהוא על המסלול' : ''}</div>
-                    {L.mixesClasses(core, h) && <div className="warn">מכוניות מהירות (ליגה/מאסטר) ורגילות באותו מקצה. מותר רק למשפחה. אי אפשר לאשר עד שמפרידים.</div>}
+                    {L.mixNeedsOk(core, h) && <div className="warn mixwarn">מכוניות מהירות (ליגה/מאסטר) ורגילות באותו מקצה. מותר רק באישור אחמ״ש (או למשפחה).
+                        {canEdit && <Btn small onClick={() => act(c => L.approveMix(c, h.id))}>אחמ״ש מאשר ערבוב</Btn>}</div>}
+                    {L.mixApproved(core, h) && <div className="meta mixok">✓ ערבוב מהירות ורגילות אושר ע״י אחמ״ש.
+                        {canEdit && <button type="button" className="kb ghost sm" onClick={() => act(c => L.approveMix(c, h.id, false))}>בטל אישור</button>}</div>}
                     <ul className="entries">
                         {h.entries.map(e => {
                             const g = core.groups.find(x => x.id === e.groupId);

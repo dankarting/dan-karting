@@ -32,7 +32,9 @@ export type Submission = { id: string; groupName: string; names: string[]; creat
 export type Entry = { groupId: string; count: number };
 export type HeatStatus = 'draft' | 'approved' | 'done';
 export type DriverEdit = { name?: string; kart?: number };
-export type Heat = { id: string; num: number; status: HeatStatus; entries: Entry[]; drivers?: Record<string, DriverEdit>; called?: boolean };
+export type Heat = { id: string; num: number; status: HeatStatus; entries: Entry[]; drivers?: Record<string, DriverEdit>; called?: boolean;
+    /** Shift manager (אחמ"ש) approved mixing fast and regular karts for exactly these groups (sorted ids). Any change to the groups voids it. */
+    mixOk?: string };
 /** How karts get matched to drivers. Not decided by the venue yet, so 'unset' keeps an editable auto suggestion. */
 export type KartMode = 'unset' | 'cashier' | 'staff';
 
@@ -117,6 +119,14 @@ export function heatClasses(core: Core, h: Heat): Set<KartClass> {
 }
 /** Fast and regular karts in the same heat, with a non-family group on each side. */
 export const mixesClasses = (core: Core, h: Heat) => heatClasses(core, h).size > 1;
+const mixKey = (h: Heat) => h.entries.map(e => e.groupId).sort().join(',');
+/** Mixed classes that still need the shift manager's OK (approval is tied to the exact groups in the heat). */
+export const mixNeedsOk = (core: Core, h: Heat) => mixesClasses(core, h) && h.mixOk !== mixKey(h);
+export const mixApproved = (core: Core, h: Heat) => mixesClasses(core, h) && h.mixOk === mixKey(h);
+/** Shift manager approves (or withdraws approval for) mixing fast and regular karts in this heat. */
+export function approveMix(core: Core, heatId: string, ok = true): Core {
+    return { ...core, heats: core.heats.map(h => (h.id === heatId ? { ...h, mixOk: ok ? mixKey(h) : undefined } : h)) };
+}
 /** Heat length of a group: what it paid for, else the default. */
 export const groupMinutes = (core: Core, g: Group) => g.minutes ?? heatMinutesOf(core);
 /** Heat lengths present in a heat (one value when consistent). */
@@ -377,7 +387,7 @@ export function startBlockers(core: Core, h: Heat): string[] {
     if (h.entries.length === 0) out.push('אין נהגים');
     if (overCapacity(h, core.settings.capacity)) out.push(`מעל הקיבולת (${core.settings.capacity})`);
     if (kartConflicts(core, h).length) out.push('קארט כפול');
-    if (mixesClasses(core, h)) out.push('מכוניות מהירות ורגילות באותו מקצה');
+    if (mixNeedsOk(core, h)) out.push('מכוניות מהירות ורגילות באותו מקצה בלי אישור אחמ״ש');
     if (mixesMinutes(core, h)) out.push('קבוצות של 10 ו-20 דקות באותו מקצה');
     return out;
 }
@@ -523,7 +533,7 @@ export const kartMode = (core: Core): KartMode => core.settings.kartMode ?? 'uns
 /** A heat may be approved when karts do not clash and, in cashier mode, every kart was chosen on purpose. */
 export function canApprove(core: Core, heat: Heat): boolean {
     if (kartConflicts(core, heat).length) return false;
-    if (mixesClasses(core, heat) || mixesMinutes(core, heat)) return false;
+    if (mixNeedsOk(core, heat) || mixesMinutes(core, heat)) return false;
     if (kartMode(core) === 'cashier' && driversOf(core, heat).some(d => !d.kartSet)) return false;
     return true;
 }

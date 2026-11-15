@@ -452,3 +452,19 @@ test('10- and 20-minute groups never share a heat', () => {
     assert.notEqual(heatOf('קצר').id, heatOf('ארוך').id);
     assert.equal(L.minutesOfHeat(c, heatOf('ארוך')), 20);
 });
+
+test('fast + regular in one heat is allowed with shift manager (אחמ״ש) approval, voided when groups change', () => {
+    let c = L.initialCore();
+    c = L.addGroup(c, { name: 'מהירים', size: 2, ticket: 'ליגה', keepTogether: true, note: '' }, 1);
+    c = L.addGroup(c, { name: 'רגילים', size: 2, ticket: 'רגיל', keepTogether: true, note: '' }, 2);
+    c = L.addGroup(c, { name: 'עוד', size: 1, ticket: 'רגיל', keepTogether: true, note: '' }, 3);
+    const [a, b, d] = c.groups;
+    c = { ...c, heats: [{ id: 'h1', num: 1, status: 'draft', entries: [{ groupId: a.id, count: 2 }, { groupId: b.id, count: 2 }] }] };
+    const h = () => c.heats[0];
+    assert.equal(L.canApprove(c, h()), false);
+    c = L.approveMix(c, 'h1');
+    assert.equal(L.canApprove(c, h()), true);
+    assert.equal(L.mixApproved(c, h()), true);
+    c = { ...c, heats: [{ ...h(), entries: [...h().entries, { groupId: d.id, count: 1 }] }] };
+    assert.equal(L.canApprove(c, h()), false, 'approval covers only the groups that were there');
+});

@@ -37,7 +37,7 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 - Heat length per registration: form + pending item pick 10 or 20 min (Submission.minutes -> Group.minutes). 10- and 20-minute
   groups never share a heat (fitsClass, canApprove, startBlockers); the heat runs minutesOfHeat.
 - Form: picking זוגי inserts a partner name row under it (second seat); switching away removes it. ליגה + מאסטר = fast karts (settings.fastTickets, editable in Settings).
-- Fast and regular never share a heat unless the group is marked family (Group.family): planner (fitsClass),
+- Fast and regular never share a heat unless the group is marked family or the shift manager approves the mix (approveMix -> Heat.mixOk, tied to the exact groups; any change voids it) (Group.family): planner (fitsClass),
   approve (canApprove) and start (startBlockers) all enforce it. Old saved tickets migrate (migrateTickets).
 - Cashier picks ticket + family on each pending registration; "שולם" = markPaidAndPlan (re-suggests drafts).
 - Customer form: ticket chips next to EACH name (Submission.tickets) + running price total (settings.prices, set in
