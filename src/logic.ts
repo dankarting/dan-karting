@@ -13,13 +13,17 @@ export type Group = {
     names?: string[];
     /** Family: may share a heat with either kart class (fast and regular). Owner rule. */
     family?: boolean;
+    /** Ticket per participant (same order as names), when chosen per person in the form. */
+    tickets?: string[];
 };
 
 /**
  * A customer's form submission: one group name + participant names. Nothing else is asked.
  * It waits at the cashier until staff confirm payment (simulated: no payment is processed here).
  */
-export type Submission = { id: string; groupName: string; names: string[]; createdAt: number; status: 'pending' | 'paid' | 'cancelled'; groupId?: string };
+export type Submission = { id: string; groupName: string; names: string[]; createdAt: number; status: 'pending' | 'paid' | 'cancelled'; groupId?: string; groupIds?: string[];
+    /** Ticket per participant, same order as names (chosen by the customer in the form). */
+    tickets?: string[] };
 
 export type Entry = { groupId: string; count: number };
 export type HeatStatus = 'draft' | 'approved' | 'done';
@@ -36,6 +40,8 @@ export type Settings = {
     tickets: string[];
     /** Ticket types that ride the FAST karts (owner: ליגה, מאסטר). They never share a heat with regular karts, unless family. */
     fastTickets?: string[];
+    /** Price per ticket type in shekels. Set by the owner in Settings; unset = no price shown. Display only, nothing is charged. */
+    prices?: Record<string, number>;
     kartMode?: KartMode;
     /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
     transponders?: Record<string, string>;
@@ -90,6 +96,14 @@ export function fitsClass(core: Core, h: Heat, g: Group): boolean {
     if (g.family) return true;
     const cls = heatClasses(core, h);
     return cls.size === 0 || (cls.size === 1 && cls.has(classOf(core, g)));
+}
+
+/** Price total for a list of tickets. `missing` lists ticket types that have no price yet. Display only. */
+export function priceOf(core: Core, tickets: string[]): { total: number; missing: string[] } {
+    const p = core.settings.prices ?? {};
+    let total = 0; const missing = new Set<string>();
+    for (const t of tickets) { const v = p[t]; if (typeof v === 'number' && v > 0) total += v; else missing.add(t); }
+    return { total, missing: [...missing] };
 }
 
 export const MIN_CAP = 1;
@@ -779,31 +793,49 @@ export const MAX_FORM_NAMES = 30;
 export const pendingOf = (core: Core): Submission[] => (core.submissions ?? []).filter(s => s.status === 'pending');
 
 /** Validate and store a form. Returns the new id, or an error (Hebrew) and the unchanged core. */
-export function submitForm(core: Core, groupName: string, names: string[], now: number): { core: Core; id?: string; error?: string } {
+export function submitForm(core: Core, groupName: string, names: string[], now: number, tickets?: string[]): { core: Core; id?: string; error?: string } {
     const gn = groupName.trim().slice(0, 40);
-    const ns = names.map(x => x.trim().slice(0, 24)).filter(Boolean);
+    const keep = names.map((x, i) => ({ n: x.trim().slice(0, 24), t: tickets?.[i] })).filter(x => x.n);
+    const ns = keep.map(x => x.n);
+    const ts = tickets ? keep.map(x => (x.t && core.settings.tickets.includes(x.t) ? x.t : core.settings.tickets[0] ?? '')) : undefined;
     if (!gn) return { core, error: 'חסר שם קבוצה' };
     if (ns.length === 0) return { core, error: 'צריך לפחות משתתף אחד' };
     if (ns.length > MAX_FORM_NAMES) return { core, error: `עד ${MAX_FORM_NAMES} משתתפים בטופס אחד` };
     const id = `s${core.seq}`;
-    return { core: { ...core, seq: core.seq + 1, submissions: [...(core.submissions ?? []), { id, groupName: gn, names: ns, createdAt: now, status: 'pending' }] }, id };
+    return { core: { ...core, seq: core.seq + 1, submissions: [...(core.submissions ?? []), { id, groupName: gn, names: ns, createdAt: now, status: 'pending', ...(ts ? { tickets: ts } : {}) }] }, id };
 }
 
 /** Staff confirm payment (simulated). The group enters the waiting list for heats with its names. */
-export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; autoPlan?: boolean } = {}): Core {
+export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[] } = {}): Core {
     const s = (core.submissions ?? []).find(x => x.id === subId);
     if (!s || s.status !== 'pending') return core;
-    const withGroup = addGroup(core, { name: s.groupName, size: s.names.length, ticket: opts.ticket ?? core.settings.tickets[0] ?? '', keepTogether: opts.keepTogether ?? true, note: '' }, now);
-    const g = withGroup.groups[withGroup.groups.length - 1];
-    return {
-        ...withGroup,
-        groups: withGroup.groups.map(x => (x.id === g.id ? { ...x, names: [...s.names], family: !!opts.family } : x)),
-        submissions: (core.submissions ?? []).map(x => (x.id === subId ? { ...x, status: 'paid' as const, groupId: g.id } : x)),
-    };
+    const fallback = opts.ticket ?? core.settings.tickets[0] ?? '';
+    const per = s.names.map((_, i) => opts.tickets?.[i] ?? (opts.ticket ? opts.ticket : s.tickets?.[i]) ?? fallback);
+    const family = !!opts.family;
+    // Fast and regular karts may not race together unless family: a mixed non-family registration becomes two groups.
+    const fastIdx = per.map((t, i) => (isFastTicket(core, t) ? i : -1)).filter(i => i >= 0);
+    const parts: { name: string; idx: number[] }[] = family || fastIdx.length === 0 || fastIdx.length === per.length
+        ? [{ name: s.groupName, idx: per.map((_, i) => i) }]
+        : [{ name: s.groupName, idx: per.map((_, i) => i).filter(i => !fastIdx.includes(i)) }, { name: `${s.groupName} (מהירות)`, idx: fastIdx }];
+    let c = core; const ids: string[] = [];
+    for (const part of parts) {
+        const ts = part.idx.map(i => per[i]);
+        const main = mostCommon(ts) ?? fallback;
+        c = addGroup(c, { name: part.name, size: part.idx.length, ticket: main, keepTogether: opts.keepTogether ?? true, note: '' }, now);
+        const g = c.groups[c.groups.length - 1];
+        ids.push(g.id);
+        c = { ...c, groups: c.groups.map(x => (x.id === g.id ? { ...x, names: part.idx.map(i => s.names[i]), family, tickets: ts } : x)) };
+    }
+    return { ...c, submissions: (core.submissions ?? []).map(x => (x.id === subId ? { ...x, status: 'paid' as const, groupId: ids[0], groupIds: ids, tickets: per } : x)) };
+}
+
+function mostCommon(xs: string[]): string | undefined {
+    const m = new Map<string, number>(); xs.forEach(x => m.set(x, (m.get(x) ?? 0) + 1));
+    return [...m].sort((a, b) => b[1] - a[1])[0]?.[0];
 }
 
 /** Paid -> into the queue AND re-suggest the draft heats, so heats build themselves as people pay. Approved heats are untouched. */
-export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean } = {}): Core => {
+export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[] } = {}): Core => {
     const next = markPaid(core, subId, now, opts);
     return next === core ? core : planHeats(next);
 };

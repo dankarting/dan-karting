@@ -63,48 +63,77 @@ function heatBadge(core: L.Core, h: L.Heat): { text: string; cls: string } {
 
 // ------------------------------------------------------------ customer form
 // What a customer fills on their own phone or a kiosk: one group name + participant names. Nothing else.
+const ils = (n: number) => `₪${n.toLocaleString('he-IL')}`;
+
+/** Price line: total, or which ticket types still have no price (owner sets prices in Settings). */
+function PriceLine({ core, tickets }: { core: L.Core; tickets: string[] }) {
+    const { total, missing } = L.priceOf(core, tickets);
+    if (tickets.length === 0) return null;
+    return <div className="price-line" aria-live="polite">
+        <span>סה״כ לתשלום</span><b>{total > 0 ? ils(total) : '–'}</b>
+        {missing.length > 0 && <small>אין עדיין מחיר ל: {missing.join(', ')} (מגדירים בהגדרות)</small>}
+    </div>;
+}
+
+/** Ticket chips for one participant. Buttons only (no native select: it crashed the hosted app). */
+function TicketChips({ core, value, onChange, label }: { core: L.Core; value: string; onChange: (t: string) => void; label: string }) {
+    const p = core.settings.prices ?? {};
+    return <div className="chips tchips" role="radiogroup" aria-label={label}>
+        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={value === t} className={`chip sm${value === t ? ' sel' : ''}${L.isFastTicket(core, t) ? ' fastc' : ''}`} onClick={() => onChange(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}{p[t] ? ` ${ils(p[t])}` : ''}</button>)}
+    </div>;
+}
+
 function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
     const [group, setGroup] = useState('');
     const [names, setNames] = useState<string[]>(['', '']);
+    const def = core.settings.tickets[0] ?? '';
+    const [tix, setTix] = useState<string[]>([def, def]);
     const [error, setError] = useState('');
-    const [sent, setSent] = useState<{ id: string; group: string; n: number } | null>(null);
+    const [sent, setSent] = useState<{ id: string; group: string; n: number; tickets: string[] } | null>(null);
+    const setTixAt = (i: number, t: string) => setTix(tix.map((x, j) => (j === i ? t : x)));
+    const chosen = names.map((n, i) => (n.trim() ? tix[i] ?? def : null)).filter((x): x is string => x != null);
     const setAt = (i: number, v: string) => { setError(''); setNames(names.map((x, j) => (j === i ? v : x))); };
     const filled = names.filter(x => x.trim()).length;
     const submit = () => {
         let res: { id?: string; error?: string } = {};
-        update(c => { const r = L.submitForm(c, group, names, Date.now()); res = r; return r.core; });
+        update(c => { const r = L.submitForm(c, group, names, Date.now(), tix); res = r; return r.core; });
         if (res.error || !res.id) { setError(res.error ?? 'שגיאה'); return; }
-        setSent({ id: res.id, group: group.trim(), n: filled }); setGroup(''); setNames(['', '']); setError('');
+        setSent({ id: res.id, group: group.trim(), n: filled, tickets: chosen }); setGroup(''); setNames(['', '']); setTix([def, def]); setError('');
     };
     const sample = () => {
         const k = Math.floor(Math.random() * 20);
         setGroup(`קבוצה לדוגמה ${k + 1}`);
-        setNames(Array.from({ length: 3 + (k % 4) }, (_, i) => L.DEMO_NAMES[(k + i * 7) % L.DEMO_NAMES.length]));
+        const n = 3 + (k % 4);
+        setNames(Array.from({ length: n }, (_, i) => L.DEMO_NAMES[(k + i * 7) % L.DEMO_NAMES.length]));
+        setTix(Array.from({ length: n }, () => def));
     };
     if (sent) return <Group label="נשלח לקופה" heading>
         <div className="sent">
             <div className="sent-num">#{sent.id.replace(/\D/g, '')}</div>
             <p><b>{sent.group}</b> · {sent.n} משתתפים</p>
+            <PriceLine core={core} tickets={sent.tickets} />
             <p>ההרשמה מחכה בקופה. גשו לקופה לתשלום. אחרי אישור התשלום תיכנסו לתור ותוזמנו במסך המסלול.</p>
         </div>
         <Btn kind="primary" onClick={() => setSent(null)}>הרשמה חדשה</Btn>
     </Group>;
     return <Group label="הרשמה לקארטינג" heading>
-        <Callout title="דמו" tone="warning">זה טופס לדוגמה. אל תזינו שמות אמיתיים. אין תשלום בטופס: התשלום בקופה.</Callout>
+        <Callout title="דמו" tone="warning">זה טופס לדוגמה. אל תזינו שמות אמיתיים. ליד כל שם בוחרים כרטיס. ליגה ומאסטר ⚡ הן מכוניות מהירות. אין תשלום בטופס: משלמים בקופה.</Callout>
         <div className="form">
             <label className="field"><span className="flabel">שם הקבוצה</span>
                 <input className="inp" value={group} onChange={e => { setError(''); setGroup(e.target.value); }} placeholder="למשל: החבר׳ה מהעבודה" maxLength={40} />
             </label>
             <div className="field"><span className="flabel">שמות המשתתפים ({filled})</span>
                 <ol className="plain dlist names">
-                    {names.map((v, i) => <li key={i} className="drow">
+                    {names.map((v, i) => <li key={i} className="drow trow">
                         <span className="meta nidx">{i + 1}</span>
                         <input className="inp dname" value={v} onChange={e => setAt(i, e.target.value)} placeholder="שם" aria-label={`משתתף ${i + 1}`} maxLength={24} />
-                        <button type="button" className="kb ghost sm" aria-label={`הסר משתתף ${i + 1}`} disabled={names.length <= 1} onClick={() => setNames(names.filter((_, j) => j !== i))}>✕</button>
+                        <button type="button" className="kb ghost sm" aria-label={`הסר משתתף ${i + 1}`} disabled={names.length <= 1} onClick={() => { setNames(names.filter((_, j) => j !== i)); setTix(tix.filter((_, j) => j !== i)); }}>✕</button>
+                        <TicketChips core={core} value={tix[i] ?? def} onChange={t => setTixAt(i, t)} label={`כרטיס למשתתף ${i + 1}`} />
                     </li>)}
                 </ol>
-                <div className="actions"><Btn small disabled={names.length >= L.MAX_FORM_NAMES} onClick={() => setNames([...names, ''])}>+ משתתף</Btn><Btn small onClick={sample}>מלא דוגמה</Btn></div>
+                <div className="actions"><Btn small disabled={names.length >= L.MAX_FORM_NAMES} onClick={() => { setNames([...names, '']); setTix([...tix, def]); }}>+ משתתף</Btn><Btn small onClick={sample}>מלא דוגמה</Btn></div>
             </div>
+            <PriceLine core={core} tickets={chosen} />
             {error && <div className="warn" role="alert">{error}</div>}
             <Btn kind="primary" onClick={submit}>שליחה לקופה</Btn>
         </div>
@@ -114,27 +143,32 @@ function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
 /** Small label: ticket type, fast-kart class, family. */
 function GroupTags({ core, g }: { core: L.Core; g: L.Group }) {
     return <span className="gtags">
-        <span className={`gtag${L.classOf(core, g) === 'fast' ? ' fast' : ''}`}>{g.ticket || 'ללא סוג'}{L.classOf(core, g) === 'fast' ? ' · מהירות' : ''}</span>
+        {(g.tickets && new Set(g.tickets).size > 1
+            ? [...new Set(g.tickets)].map(t => <span key={t} className={`gtag${L.isFastTicket(core, t) ? ' fast' : ''}`}>{t} ×{g.tickets!.filter(x => x === t).length}</span>)
+            : <span className={`gtag${L.classOf(core, g) === 'fast' ? ' fast' : ''}`}>{g.ticket || 'ללא סוג'}{L.classOf(core, g) === 'fast' ? ' · מהירות' : ''}</span>)}
         {g.family && <span className="gtag fam">משפחה</span>}
     </span>;
 }
 
-/** One pending registration: the cashier picks the ticket (and family), then marks it paid. */
+/** One pending registration: tickets per participant (from the form, editable), family, price, then "paid". */
 function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L.Submission }) {
-    const [ticket, setTicket] = useState(core.settings.tickets[0] ?? '');
+    const def = core.settings.tickets[0] ?? '';
+    const [tix, setTix] = useState<string[]>(() => sb.names.map((_, i) => sb.tickets?.[i] ?? def));
     const [family, setFamily] = useState(false);
-    const fast = L.isFastTicket(core, ticket);
+    const fast = tix.filter(t => L.isFastTicket(core, t)).length;
+    const mixed = fast > 0 && fast < tix.length;
     return <li className="item pending">
         <div className="itop"><strong>{sb.groupName}</strong><span className="big">{sb.names.length}</span></div>
         <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}</div>
-        <div className="names-list">{sb.names.join(' · ')}</div>
-        <div className="chips" role="radiogroup" aria-label="סוג כרטיס">
-            {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={ticket === t} className={`chip${ticket === t ? ' sel' : ''}`} onClick={() => setTicket(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}</button>)}
-            <button type="button" aria-pressed={family} className={`chip${family ? ' sel' : ''}`} onClick={() => setFamily(!family)}>משפחה</button>
-        </div>
-        <div className="meta">{fast ? 'מכוניות מהירות: ישובצו רק עם מכוניות מהירות' : 'מכוניות רגילות'}{family ? ' · משפחה: מותר לשבץ גם עם הסוג השני' : ''}</div>
+        <ul className="plain dlist">
+            {sb.names.map((n, i) => <li key={i} className="trow"><span className="tname">{n}</span>
+                <TicketChips core={core} value={tix[i]} onChange={t => setTix(tix.map((x, j) => (j === i ? t : x)))} label={`כרטיס ל${n}`} /></li>)}
+        </ul>
+        <div className="chips"><button type="button" aria-pressed={family} className={`chip${family ? ' sel' : ''}`} onClick={() => setFamily(!family)}>משפחה (מותר לערבב מהירות ורגילות)</button></div>
+        {mixed && <div className={family ? 'meta' : 'warn'}>{family ? 'משפחה: ייכנסו יחד לאותו מקצה.' : `יש כאן ${fast} עם מכוניות מהירות ו-${tix.length - fast} עם רגילות. אם זו לא משפחה, הם יתפצלו לשתי קבוצות ולמקצים נפרדים.`}</div>}
+        <PriceLine core={core} tickets={tix} />
         <div className="actions">
-            <Btn kind="primary" small onClick={() => update(c => L.markPaidAndPlan(c, sb.id, Date.now(), { ticket, family }))}>שולם · הכנס לתור</Btn>
+            <Btn kind="primary" small onClick={() => update(c => L.markPaidAndPlan(c, sb.id, Date.now(), { tickets: tix, family }))}>שולם · הכנס לתור</Btn>
             <Btn kind="danger" small onClick={() => update(c => L.cancelSubmission(c, sb.id))}>בטל הרשמה</Btn>
         </div>
     </li>;
@@ -659,10 +693,14 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
             </div>
             <div className="field"><span className="flabel">סוגי כרטיס</span>
                 <div className="chips">{s.tickets.map(x => <button key={x} type="button" className="chip" onClick={() => s.tickets.length > 1 && upd({ tickets: s.tickets.filter(y => y !== x), fastTickets: (s.fastTickets ?? []).filter(y => y !== x) })} aria-label={`הסר ${x}`}>{x} ✕</button>)}</div>
+                <span className="flabel">מחיר לכרטיס (₪)</span>
+                <ul className="plain dlist">{s.tickets.map(x => <li key={x} className="trow"><span className="tname">{x}</span>
+                    <input key={`p-${x}-${s.prices?.[x] ?? ''}`} className="inp price-inp" type="number" inputMode="numeric" min={0} step={1} dir="ltr" placeholder="לא הוגדר" defaultValue={s.prices?.[x] ?? ''} aria-label={`מחיר ${x}`}
+                        onBlur={e => { const v = Math.max(0, Math.round(Number(e.target.value) || 0)); const next = { ...(s.prices ?? {}) }; if (v > 0) next[x] = v; else delete next[x]; upd({ prices: next }); }} /></li>)}</ul>
                 <span className="flabel">מכוניות מהירות (לא משובצים עם רגילות, חוץ ממשפחה)</span>
                 <div className="chips">{s.tickets.map(x => { const on = L.isFastTicket(core, x); return <button key={x} type="button" aria-pressed={on} className={`chip${on ? ' sel' : ''}`} onClick={() => upd({ fastTickets: on ? (s.fastTickets ?? L.DEFAULT_FAST_TICKETS).filter(y => y !== x) : [...(s.fastTickets ?? L.DEFAULT_FAST_TICKETS), x] })}>⚡ {x}</button>; })}</div>
                 <div className="inline"><input className="inp" value={t} onChange={e => setT(e.target.value)} placeholder="סוג חדש" maxLength={24} /><Btn onClick={() => { const v = t.trim(); if (v && !s.tickets.includes(v)) { upd({ tickets: [...s.tickets, v] }); setT(''); } }}>הוסף</Btn></div>
-                <p className="meta">שמות בלבד. האפליקציה לא מחזיקה מחירים ולא גובה תשלום.</p>
+                <p className="meta">המחירים מוצגים בטופס ובקופה כחישוב בלבד. האפליקציה לא גובה תשלום.</p>
             </div>
         </Group>
         <Group label="מה אמיתי ומה לא" heading>

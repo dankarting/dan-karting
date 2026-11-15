@@ -32,6 +32,9 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 - Fast and regular never share a heat unless the group is marked family (Group.family): planner (fitsClass),
   approve (canApprove) and start (startBlockers) all enforce it. Old saved tickets migrate (migrateTickets).
 - Cashier picks ticket + family on each pending registration; "שולם" = markPaidAndPlan (re-suggests drafts).
+- Customer form: ticket chips next to EACH name (Submission.tickets) + running price total (settings.prices, set in
+  Settings, display only). Cashier can change per-person tickets. A non-family registration with both fast and regular
+  tickets is split on payment into two groups ("<name> (מהירות)"). Prices are not set by default (owner to supply).
 - Open: does "זוגי" mean a two-seat kart (2 people, 1 kart)? Today it is just a ticket name and counts per person.
 
 ## Customer form -> payment -> queue (owner flow, supersedes cashier typing every name)

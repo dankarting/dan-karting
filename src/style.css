@@ -354,3 +354,12 @@ body { background: #0b0b0c; }
 .gtag { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--dk-line); color: var(--dk-muted); }
 .gtag.fast { border-color: var(--dk-yellow); color: var(--dk-yellow); }
 .gtag.fam { border-color: #2f7cf6; color: #8fb6ff; }
+.trow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 0; border-bottom: 1px solid var(--dk-line); }
+.trow .tname { min-width: 72px; font-weight: 600; }
+.tchips { flex-basis: 100%; gap: 6px; }
+.chip.sm { padding: 4px 10px; font-size: 13px; min-height: 32px; }
+.chip.fastc:not(.sel) { border-color: rgba(255, 212, 0, .45); }
+.price-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--dk-line); border-radius: 8px; background: var(--dk-surface); }
+.price-line b { font-size: 22px; color: var(--dk-yellow); }
+.price-line small { flex-basis: 100%; color: var(--dk-muted); font-size: 12px; }
+.price-inp { width: 120px; }
