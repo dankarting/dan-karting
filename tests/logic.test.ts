@@ -378,12 +378,12 @@ test('timed heat: default 10 min, 20 possible, min 10; ends after the lap in pro
 test('four ticket types: ליגה/מאסטר (fast) never share a heat with regular karts, unless family; heats build on payment', () => {
     let c = L.initialCore();
     c = { ...c, groups: [], submissions: [] };
-    assert.deepEqual(c.settings.tickets, ['יחיד', 'זוגי', 'ליגה', 'מאסטר']);
+    assert.deepEqual(c.settings.tickets, ['רגיל', 'זוגי', 'ליגה', 'מאסטר']);
     const pay = (name: string, n: number, ticket: string, family = false) => {
         const r = L.submitForm(c, name, Array.from({ length: n }, (_, i) => `${name}${i}`), 1);
         c = L.markPaidAndPlan(r.core, r.id!, 2, { ticket, family });
     };
-    pay('רגיל', 3, 'יחיד');
+    pay('רגיל', 3, 'רגיל');
     assert.equal(c.heats.length, 1, 'a heat is suggested as soon as a group pays');
     pay('ליגה', 3, 'ליגה');
     assert.equal(c.heats.length, 2, 'fast group goes to its own heat although there is room');
@@ -403,16 +403,16 @@ test('four ticket types: ליגה/מאסטר (fast) never share a heat with regu
     assert.equal(L.approveHeat(mixed, mh.id).heats.find(h => h.id === mh.id)!.status, 'draft');
     // old saved tickets migrate to the four types
     const old = { ...c, settings: { ...c.settings, tickets: ['קארטינג', 'כרטיס משולב'], fastTickets: undefined } };
-    assert.deepEqual(L.migrateTickets(old).settings.tickets, ['יחיד', 'זוגי', 'ליגה', 'מאסטר']);
+    assert.deepEqual(L.migrateTickets(old).settings.tickets, ['רגיל', 'זוגי', 'ליגה', 'מאסטר']);
 });
 
 test('ticket per participant in the form; price total; mixed non-family registration splits by kart class', () => {
     let c = L.initialCore();
-    c = { ...c, groups: [], submissions: [], settings: { ...c.settings, prices: { 'יחיד': 100, 'ליגה': 150 } } };
-    const r = L.submitForm(c, 'חברים', ['א', ' ', 'ב', 'ג'], 1, ['יחיד', 'מאסטר', 'ליגה', 'יחיד']);
+    c = { ...c, groups: [], submissions: [], settings: { ...c.settings, prices: { 'רגיל': 100, 'ליגה': 150 } } };
+    const r = L.submitForm(c, 'חברים', ['א', ' ', 'ב', 'ג'], 1, ['רגיל', 'מאסטר', 'ליגה', 'רגיל']);
     const sub = r.core.submissions![0];
     assert.deepEqual(sub.names, ['א', 'ב', 'ג']);
-    assert.deepEqual(sub.tickets, ['יחיד', 'ליגה', 'יחיד'], 'tickets follow the names when a blank row is dropped');
+    assert.deepEqual(sub.tickets, ['רגיל', 'ליגה', 'רגיל'], 'tickets follow the names when a blank row is dropped');
     assert.deepEqual(L.priceOf(r.core, sub.tickets!), { total: 350, missing: [] });
     assert.deepEqual(L.priceOf(r.core, ['זוגי']).missing, ['זוגי']);
     // not family -> two groups, never in the same heat
@@ -424,7 +424,19 @@ test('ticket per participant in the form; price total; mixed non-family registra
     // family -> one group, one heat
     const f = L.markPaidAndPlan(r.core, r.id!, 2, { family: true });
     assert.equal(f.groups.length, 1); assert.equal(f.heats.length, 1);
-    assert.deepEqual(f.groups[0].tickets, ['יחיד', 'ליגה', 'יחיד']);
+    assert.deepEqual(f.groups[0].tickets, ['רגיל', 'ליגה', 'רגיל']);
+});
+
+test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאסטר 100, ליגה not priced yet', () => {
+    const c = L.initialCore();
+    assert.deepEqual(L.priceOf(c, ['רגיל', 'רגיל', 'מאסטר']), { total: 274, missing: [] });
+    assert.equal(L.priceOf(c, ['זוגי', 'זוגי']).total, 100, 'two people share one double kart');
+    assert.equal(L.priceOf(c, ['זוגי', 'זוגי', 'זוגי']).total, 200);
+    assert.deepEqual(L.priceOf(c, ['ליגה']).missing, ['ליגה']);
+    const old = { ...c, settings: { ...c.settings, tickets: ['יחיד', 'זוגי', 'ליגה', 'מאסטר'], prices: undefined } };
+    const m = L.migrateTickets(old);
+    assert.deepEqual(m.settings.tickets, ['רגיל', 'זוגי', 'ליגה', 'מאסטר']);
+    assert.equal(m.settings.prices?.['רגיל'], 87);
 });
 
 console.log(`\n${passed} passed, ${failed.length} failed`);

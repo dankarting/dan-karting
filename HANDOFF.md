@@ -28,7 +28,8 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 - A heat NEVER starts by itself: the autopilot only calls heats and saves results; staff press "התחל מקצה".
 
 ## Ticket types and kart classes (owner, 2026-11-15)
-- Tickets: יחיד, זוגי, ליגה, מאסטר. ליגה + מאסטר = fast karts (settings.fastTickets, editable in Settings).
+- Tickets: רגיל, זוגי, ליגה, מאסטר (יחיד renamed רגיל: on the board "ליחיד" means per person).
+- Prices from the venue board (10 min): רגיל 87, זוגי 100 per two-seat kart (pairTickets, priced per 2 people), מאסטר 100, ליגה unknown. ליגה + מאסטר = fast karts (settings.fastTickets, editable in Settings).
 - Fast and regular never share a heat unless the group is marked family (Group.family): planner (fitsClass),
   approve (canApprove) and start (startBlockers) all enforce it. Old saved tickets migrate (migrateTickets).
 - Cashier picks ticket + family on each pending registration; "שולם" = markPaidAndPlan (re-suggests drafts).

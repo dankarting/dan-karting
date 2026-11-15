@@ -42,6 +42,8 @@ export type Settings = {
     fastTickets?: string[];
     /** Price per ticket type in shekels. Set by the owner in Settings; unset = no price shown. Display only, nothing is charged. */
     prices?: Record<string, number>;
+    /** Ticket types where two participants share one kart and pay one price (זוגי). */
+    pairTickets?: string[];
     kartMode?: KartMode;
     /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
     transponders?: Record<string, string>;
@@ -67,16 +69,30 @@ export type Core = {
 };
 
 /** The venue's four ticket types (owner, 2026-11-15). ליגה and מאסטר ride the fast karts. */
-export const DEFAULT_TICKETS = ['יחיד', 'זוגי', 'ליגה', 'מאסטר'];
+export const DEFAULT_TICKETS = ['רגיל', 'זוגי', 'ליגה', 'מאסטר'];
 export const DEFAULT_FAST_TICKETS = ['ליגה', 'מאסטר'];
+/** From the venue price board (photo, 2026-11-15), per 10-minute heat: karting 87, two-seat kart with adult 100 (per kart),
+ *  Master 100. League has no price on the board yet. */
+export const DEFAULT_PRICES: Record<string, number> = { 'רגיל': 87, 'זוגי': 100, 'מאסטר': 100 };
+/** Two-seat kart: two participants share one kart and one price ("רכב זוגי בליווי מבוגר"). */
+export const DEFAULT_PAIR_TICKETS = ['זוגי'];
 const OLD_DEFAULT_TICKETS = ['קארטינג', 'כרטיס משולב'];
 
 /** Saved data from before the four ticket types: swap the old placeholder tickets for the real ones. */
 export function migrateTickets(core: Core): Core {
-    const t = core.settings.tickets;
+    let st = core.settings;
+    const t = st.tickets;
     const old = t.length === OLD_DEFAULT_TICKETS.length && t.every((x, i) => x === OLD_DEFAULT_TICKETS[i]);
-    if (!old && core.settings.fastTickets) return core;
-    return { ...core, settings: { ...core.settings, tickets: old ? [...DEFAULT_TICKETS] : t, fastTickets: core.settings.fastTickets ?? (old ? [...DEFAULT_FAST_TICKETS] : t.filter(x => DEFAULT_FAST_TICKETS.includes(x))) } };
+    if (old) st = { ...st, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS] };
+    if (!st.fastTickets) st = { ...st, fastTickets: st.tickets.filter(x => DEFAULT_FAST_TICKETS.includes(x)) };
+    // "יחיד" on the price board means "per person"; the ticket is called "רגיל".
+    if (st.tickets.includes('יחיד') && !st.tickets.includes('רגיל')) st = { ...st, tickets: st.tickets.map(x => (x === 'יחיד' ? 'רגיל' : x)) };
+    if (!st.prices) st = { ...st, prices: Object.fromEntries(Object.entries(DEFAULT_PRICES).filter(([k]) => st.tickets.includes(k))) };
+    if (!st.pairTickets) st = { ...st, pairTickets: [...DEFAULT_PAIR_TICKETS] };
+    if (st === core.settings) return core;
+    const ren = (x: string) => (x === 'יחיד' ? 'רגיל' : x);
+    return { ...core, settings: st, groups: core.groups.map(g => ({ ...g, ticket: ren(g.ticket), tickets: g.tickets?.map(ren) })),
+        submissions: core.submissions?.map(x => ({ ...x, tickets: x.tickets?.map(ren) })) };
 }
 
 export type KartClass = 'fast' | 'regular';
@@ -101,16 +117,22 @@ export function fitsClass(core: Core, h: Heat, g: Group): boolean {
 /** Price total for a list of tickets. `missing` lists ticket types that have no price yet. Display only. */
 export function priceOf(core: Core, tickets: string[]): { total: number; missing: string[] } {
     const p = core.settings.prices ?? {};
-    let total = 0; const missing = new Set<string>();
-    for (const t of tickets) { const v = p[t]; if (typeof v === 'number' && v > 0) total += v; else missing.add(t); }
-    return { total, missing: [...missing] };
+    const pair = new Set(core.settings.pairTickets ?? DEFAULT_PAIR_TICKETS);
+    const count = new Map<string, number>(); tickets.forEach(t => count.set(t, (count.get(t) ?? 0) + 1));
+    let total = 0; const missing: string[] = [];
+    for (const [t, n] of count) {
+        const v = p[t];
+        if (typeof v !== 'number' || v <= 0) { missing.push(t); continue; }
+        total += v * (pair.has(t) ? Math.ceil(n / 2) : n); // two participants share one two-seat kart
+    }
+    return { total, missing };
 }
 
 export const MIN_CAP = 1;
 export const MAX_CAP = 30;
 
 export const initialCore = (): Core => ({
-    settings: { capacity: 10, laps: 8, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS] },
+    settings: { capacity: 10, laps: 8, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS], prices: { ...DEFAULT_PRICES }, pairTickets: [...DEFAULT_PAIR_TICKETS] },
     groups: [],
     heats: [],
     nextHeatNum: 1,

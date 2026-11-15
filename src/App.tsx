@@ -79,7 +79,7 @@ function PriceLine({ core, tickets }: { core: L.Core; tickets: string[] }) {
 function TicketChips({ core, value, onChange, label }: { core: L.Core; value: string; onChange: (t: string) => void; label: string }) {
     const p = core.settings.prices ?? {};
     return <div className="chips tchips" role="radiogroup" aria-label={label}>
-        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={value === t} className={`chip sm${value === t ? ' sel' : ''}${L.isFastTicket(core, t) ? ' fastc' : ''}`} onClick={() => onChange(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}{p[t] ? ` ${ils(p[t])}` : ''}</button>)}
+        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={value === t} className={`chip sm${value === t ? ' sel' : ''}${L.isFastTicket(core, t) ? ' fastc' : ''}`} onClick={() => onChange(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}{p[t] ? ` ${ils(p[t])}` : ''}{(core.settings.pairTickets ?? []).includes(t) ? ' לשניים' : ''}</button>)}
     </div>;
 }
 
@@ -693,7 +693,8 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
             </div>
             <div className="field"><span className="flabel">סוגי כרטיס</span>
                 <div className="chips">{s.tickets.map(x => <button key={x} type="button" className="chip" onClick={() => s.tickets.length > 1 && upd({ tickets: s.tickets.filter(y => y !== x), fastTickets: (s.fastTickets ?? []).filter(y => y !== x) })} aria-label={`הסר ${x}`}>{x} ✕</button>)}</div>
-                <span className="flabel">מחיר לכרטיס (₪)</span>
+                <span className="flabel">מחיר לכרטיס (₪, למקצה של 10 דקות)</span>
+                <p className="meta">לפי המחירון במקום: רגיל 87, זוגי 100 (רכב דו-מושבי בליווי מבוגר, מחיר אחד לשניים), מאסטר 100. לליגה עוד אין מחיר.</p>
                 <ul className="plain dlist">{s.tickets.map(x => <li key={x} className="trow"><span className="tname">{x}</span>
                     <input key={`p-${x}-${s.prices?.[x] ?? ''}`} className="inp price-inp" type="number" inputMode="numeric" min={0} step={1} dir="ltr" placeholder="לא הוגדר" defaultValue={s.prices?.[x] ?? ''} aria-label={`מחיר ${x}`}
                         onBlur={e => { const v = Math.max(0, Math.round(Number(e.target.value) || 0)); const next = { ...(s.prices ?? {}) }; if (v > 0) next[x] = v; else delete next[x]; upd({ prices: next }); }} /></li>)}</ul>
