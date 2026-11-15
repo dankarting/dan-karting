@@ -375,5 +375,36 @@ test('timed heat: default 10 min, 20 possible, min 10; ends after the lap in pro
     assert.equal(result?.minutes, 20);
 });
 
+test('four ticket types: ליגה/מאסטר (fast) never share a heat with regular karts, unless family; heats build on payment', () => {
+    let c = L.initialCore();
+    c = { ...c, groups: [], submissions: [] };
+    assert.deepEqual(c.settings.tickets, ['יחיד', 'זוגי', 'ליגה', 'מאסטר']);
+    const pay = (name: string, n: number, ticket: string, family = false) => {
+        const r = L.submitForm(c, name, Array.from({ length: n }, (_, i) => `${name}${i}`), 1);
+        c = L.markPaidAndPlan(r.core, r.id!, 2, { ticket, family });
+    };
+    pay('רגיל', 3, 'יחיד');
+    assert.equal(c.heats.length, 1, 'a heat is suggested as soon as a group pays');
+    pay('ליגה', 3, 'ליגה');
+    assert.equal(c.heats.length, 2, 'fast group goes to its own heat although there is room');
+    pay('זוג', 2, 'זוגי');
+    pay('מאסטר', 2, 'מאסטר');
+    for (const h of c.heats) assert.ok(!L.mixesClasses(c, h), `heat ${h.num} mixes classes`);
+    assert.equal(c.heats.length, 2);
+    // a family may join either class
+    pay('משפחה', 2, 'ליגה', true);
+    assert.equal(c.heats.length, 2, 'family fits into an existing heat');
+    // manual mixing is blocked from approval and start
+    const fastG = c.groups.find(g => g.name === 'ליגה')!;
+    const regHeat = c.heats.find(h => h.entries.some(e => c.groups.find(g => g.id === e.groupId)?.name === 'רגיל'))!;
+    const mixed = { ...c, heats: c.heats.map(h => (h.id === regHeat.id ? { ...h, entries: [...h.entries, { groupId: fastG.id, count: 1 }] } : h)) };
+    const mh = mixed.heats.find(h => h.id === regHeat.id)!;
+    assert.ok(L.mixesClasses(mixed, mh));
+    assert.equal(L.approveHeat(mixed, mh.id).heats.find(h => h.id === mh.id)!.status, 'draft');
+    // old saved tickets migrate to the four types
+    const old = { ...c, settings: { ...c.settings, tickets: ['קארטינג', 'כרטיס משולב'], fastTickets: undefined } };
+    assert.deepEqual(L.migrateTickets(old).settings.tickets, ['יחיד', 'זוגי', 'ליגה', 'מאסטר']);
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);

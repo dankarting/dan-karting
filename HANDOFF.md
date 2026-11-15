@@ -22,6 +22,18 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 - Viewers run the race clock locally from the race start time in the board (relies on network-synced device clocks).
 - Hosting: GitHub Pages from branch gh-pages (built dist/, vite base './').
 
+## Timed heats + manual start (owner, 2026-11-15)
+- Heat length: Settings.heatMinutes, default 10, minimum 10, chips 10/20, stepper up to 30. Fixed into live.durationMs at start.
+- When time is up each driver finishes the lap in progress, then is done (timedTiming). Board countdown = real time left.
+- A heat NEVER starts by itself: the autopilot only calls heats and saves results; staff press "התחל מקצה".
+
+## Ticket types and kart classes (owner, 2026-11-15)
+- Tickets: יחיד, זוגי, ליגה, מאסטר. ליגה + מאסטר = fast karts (settings.fastTickets, editable in Settings).
+- Fast and regular never share a heat unless the group is marked family (Group.family): planner (fitsClass),
+  approve (canApprove) and start (startBlockers) all enforce it. Old saved tickets migrate (migrateTickets).
+- Cashier picks ticket + family on each pending registration; "שולם" = markPaidAndPlan (re-suggests drafts).
+- Open: does "זוגי" mean a two-seat kart (2 people, 1 kart)? Today it is just a ticket name and counts per person.
+
 ## Customer form -> payment -> queue (owner flow, supersedes cashier typing every name)
 - Tab "הרשמה": the customer fills ONE group name + participant names. No other fields (no phone, email, age, price).
 - The submission waits at the cashier under "ממתינים לתשלום". It is NOT in the queue and cannot be planned.

@@ -11,6 +11,8 @@ export type Group = {
     createdAt: number;
     /** Participant names from the customer form, in the order entered. Absent for groups the cashier added by count. */
     names?: string[];
+    /** Family: may share a heat with either kart class (fast and regular). Owner rule. */
+    family?: boolean;
 };
 
 /**
@@ -32,6 +34,8 @@ export type Settings = {
     /** Heat duration in minutes. 10 is the minimum (owner); 20 is the other common option. Default 10. */
     heatMinutes?: number;
     tickets: string[];
+    /** Ticket types that ride the FAST karts (owner: ליגה, מאסטר). They never share a heat with regular karts, unless family. */
+    fastTickets?: string[];
     kartMode?: KartMode;
     /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
     transponders?: Record<string, string>;
@@ -56,11 +60,43 @@ export type Core = {
     submissions?: Submission[];
 };
 
+/** The venue's four ticket types (owner, 2026-11-15). ליגה and מאסטר ride the fast karts. */
+export const DEFAULT_TICKETS = ['יחיד', 'זוגי', 'ליגה', 'מאסטר'];
+export const DEFAULT_FAST_TICKETS = ['ליגה', 'מאסטר'];
+const OLD_DEFAULT_TICKETS = ['קארטינג', 'כרטיס משולב'];
+
+/** Saved data from before the four ticket types: swap the old placeholder tickets for the real ones. */
+export function migrateTickets(core: Core): Core {
+    const t = core.settings.tickets;
+    const old = t.length === OLD_DEFAULT_TICKETS.length && t.every((x, i) => x === OLD_DEFAULT_TICKETS[i]);
+    if (!old && core.settings.fastTickets) return core;
+    return { ...core, settings: { ...core.settings, tickets: old ? [...DEFAULT_TICKETS] : t, fastTickets: core.settings.fastTickets ?? (old ? [...DEFAULT_FAST_TICKETS] : t.filter(x => DEFAULT_FAST_TICKETS.includes(x))) } };
+}
+
+export type KartClass = 'fast' | 'regular';
+export const isFastTicket = (core: Core, ticket: string) => (core.settings.fastTickets ?? DEFAULT_FAST_TICKETS).includes(ticket);
+export const classOf = (core: Core, g: Group): KartClass => (isFastTicket(core, g.ticket) ? 'fast' : 'regular');
+
+/** Kart classes of the NON-family groups in a heat. Family groups fit with either class. */
+export function heatClasses(core: Core, h: Heat): Set<KartClass> {
+    const out = new Set<KartClass>();
+    for (const e of h.entries) { const g = core.groups.find(x => x.id === e.groupId); if (g && !g.family) out.add(classOf(core, g)); }
+    return out;
+}
+/** Fast and regular karts in the same heat, with a non-family group on each side. */
+export const mixesClasses = (core: Core, h: Heat) => heatClasses(core, h).size > 1;
+/** Can group g join heat h without mixing fast and regular karts? */
+export function fitsClass(core: Core, h: Heat, g: Group): boolean {
+    if (g.family) return true;
+    const cls = heatClasses(core, h);
+    return cls.size === 0 || (cls.size === 1 && cls.has(classOf(core, g)));
+}
+
 export const MIN_CAP = 1;
 export const MAX_CAP = 30;
 
 export const initialCore = (): Core => ({
-    settings: { capacity: 10, laps: 8, tickets: ['קארטינג', 'כרטיס משולב'] },
+    settings: { capacity: 10, laps: 8, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS] },
     groups: [],
     heats: [],
     nextHeatNum: 1,
@@ -111,7 +147,7 @@ export function planHeats(core: Core): Core {
         if (left > cap && g.keepTogether) continue;
         if (left <= cap || !g.keepTogether) {
             // whole group fits somewhere?
-            const whole = drafts.find(h => cap - heatCount(h) >= left);
+            const whole = drafts.find(h => cap - heatCount(h) >= left && fitsClass(core, h, g));
             if (left <= cap && whole) {
                 whole.entries.push({ groupId: g.id, count: left });
                 continue;
@@ -125,7 +161,7 @@ export function planHeats(core: Core): Core {
         for (const h of drafts) {
             if (left <= 0) break;
             const free = cap - heatCount(h);
-            if (free > 0 && !g.keepTogether) {
+            if (free > 0 && !g.keepTogether && fitsClass(core, h, g)) {
                 const take = Math.min(free, left);
                 h.entries.push({ groupId: g.id, count: take });
                 left -= take;
@@ -281,6 +317,7 @@ export function startBlockers(core: Core, h: Heat): string[] {
     if (h.entries.length === 0) out.push('אין נהגים');
     if (overCapacity(h, core.settings.capacity)) out.push(`מעל הקיבולת (${core.settings.capacity})`);
     if (kartConflicts(core, h).length) out.push('קארט כפול');
+    if (mixesClasses(core, h)) out.push('מכוניות מהירות ורגילות באותו מקצה');
     return out;
 }
 
@@ -425,6 +462,7 @@ export const kartMode = (core: Core): KartMode => core.settings.kartMode ?? 'uns
 /** A heat may be approved when karts do not clash and, in cashier mode, every kart was chosen on purpose. */
 export function canApprove(core: Core, heat: Heat): boolean {
     if (kartConflicts(core, heat).length) return false;
+    if (mixesClasses(core, heat)) return false;
     if (kartMode(core) === 'cashier' && driversOf(core, heat).some(d => !d.kartSet)) return false;
     return true;
 }
@@ -663,10 +701,10 @@ export function trimHistory(h: Result[], maxBytes = 14000): Result[] {
 
 export const demoGroups: { name: string; size: number; ticket: number; keepTogether: boolean; note: string }[] = [
     { name: 'משפחת כהן (דמו)', size: 4, ticket: 0, keepTogether: true, note: '' },
-    { name: 'יום הולדת (דמו)', size: 7, ticket: 1, keepTogether: true, note: '' },
-    { name: 'דני ושני (דמו)', size: 2, ticket: 0, keepTogether: true, note: '' },
-    { name: 'משפחת לוי (דמו)', size: 5, ticket: 1, keepTogether: true, note: '' },
-    { name: 'חברים (דמו)', size: 3, ticket: 0, keepTogether: false, note: '' },
+    { name: 'יום הולדת (דמו)', size: 7, ticket: 0, keepTogether: true, note: '' },
+    { name: 'דני ושני (דמו)', size: 2, ticket: 1, keepTogether: true, note: '' },
+    { name: 'ליגת חמישי (דמו)', size: 5, ticket: 2, keepTogether: true, note: '' },
+    { name: 'חברים (דמו)', size: 3, ticket: 3, keepTogether: false, note: '' },
     { name: 'צוות עבודה (דמו)', size: 12, ticket: 1, keepTogether: true, note: 'גדול מהקיבולת, יפוצל' },
 ];
 
@@ -752,17 +790,23 @@ export function submitForm(core: Core, groupName: string, names: string[], now: 
 }
 
 /** Staff confirm payment (simulated). The group enters the waiting list for heats with its names. */
-export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string } = {}): Core {
+export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; autoPlan?: boolean } = {}): Core {
     const s = (core.submissions ?? []).find(x => x.id === subId);
     if (!s || s.status !== 'pending') return core;
     const withGroup = addGroup(core, { name: s.groupName, size: s.names.length, ticket: opts.ticket ?? core.settings.tickets[0] ?? '', keepTogether: opts.keepTogether ?? true, note: '' }, now);
     const g = withGroup.groups[withGroup.groups.length - 1];
     return {
         ...withGroup,
-        groups: withGroup.groups.map(x => (x.id === g.id ? { ...x, names: [...s.names] } : x)),
+        groups: withGroup.groups.map(x => (x.id === g.id ? { ...x, names: [...s.names], family: !!opts.family } : x)),
         submissions: (core.submissions ?? []).map(x => (x.id === subId ? { ...x, status: 'paid' as const, groupId: g.id } : x)),
     };
 }
+
+/** Paid -> into the queue AND re-suggest the draft heats, so heats build themselves as people pay. Approved heats are untouched. */
+export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean } = {}): Core => {
+    const next = markPaid(core, subId, now, opts);
+    return next === core ? core : planHeats(next);
+};
 
 /** Drop a pending submission (customer left, duplicate...). Paid ones are handled as groups. */
 export const cancelSubmission = (core: Core, subId: string): Core => ({

@@ -111,17 +111,47 @@ function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
     </Group>;
 }
 
+/** Small label: ticket type, fast-kart class, family. */
+function GroupTags({ core, g }: { core: L.Core; g: L.Group }) {
+    return <span className="gtags">
+        <span className={`gtag${L.classOf(core, g) === 'fast' ? ' fast' : ''}`}>{g.ticket || 'ללא סוג'}{L.classOf(core, g) === 'fast' ? ' · מהירות' : ''}</span>
+        {g.family && <span className="gtag fam">משפחה</span>}
+    </span>;
+}
+
+/** One pending registration: the cashier picks the ticket (and family), then marks it paid. */
+function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L.Submission }) {
+    const [ticket, setTicket] = useState(core.settings.tickets[0] ?? '');
+    const [family, setFamily] = useState(false);
+    const fast = L.isFastTicket(core, ticket);
+    return <li className="item pending">
+        <div className="itop"><strong>{sb.groupName}</strong><span className="big">{sb.names.length}</span></div>
+        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}</div>
+        <div className="names-list">{sb.names.join(' · ')}</div>
+        <div className="chips" role="radiogroup" aria-label="סוג כרטיס">
+            {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={ticket === t} className={`chip${ticket === t ? ' sel' : ''}`} onClick={() => setTicket(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}</button>)}
+            <button type="button" aria-pressed={family} className={`chip${family ? ' sel' : ''}`} onClick={() => setFamily(!family)}>משפחה</button>
+        </div>
+        <div className="meta">{fast ? 'מכוניות מהירות: ישובצו רק עם מכוניות מהירות' : 'מכוניות רגילות'}{family ? ' · משפחה: מותר לשבץ גם עם הסוג השני' : ''}</div>
+        <div className="actions">
+            <Btn kind="primary" small onClick={() => update(c => L.markPaidAndPlan(c, sb.id, Date.now(), { ticket, family }))}>שולם · הכנס לתור</Btn>
+            <Btn kind="danger" small onClick={() => update(c => L.cancelSubmission(c, sb.id))}>בטל הרשמה</Btn>
+        </div>
+    </li>;
+}
+
 // ------------------------------------------------------------------ cashier
 function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHeats: () => void }) {
     const [name, setName] = useState('');
     const [size, setSize] = useState(2);
     const [ticket, setTicket] = useState(core.settings.tickets[0] ?? '');
     const [keep, setKeep] = useState(true);
+    const [fam, setFam] = useState(false);
     const [note, setNote] = useState('');
     const split = useMemo(() => L.splitGroupIds(core.heats), [core.heats]);
     const add = () => {
         const nm = name.trim() || `קבוצה ${core.groups.length + 1}`;
-        update(c => L.addGroup(c, { name: nm, size, ticket, keepTogether: keep, note: note.trim() }, Date.now()));
+        update(c => { const x = L.addGroup(c, { name: nm, size, ticket, keepTogether: keep, note: note.trim() }, Date.now()); const id = x.groups[x.groups.length - 1].id; return { ...x, groups: x.groups.map(g => (g.id === id ? { ...g, family: fam } : g)) }; });
         setName(''); setNote(''); setSize(2); setKeep(true);
     };
     const loadDemo = () => update(c => {
@@ -135,18 +165,10 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
     const [manual, setManual] = useState(false);
     return <>
         <Group label={`ממתינים לתשלום (${pending.length})`} heading>
-            <p className="meta">הרשמות שהלקוחות שלחו מהטופס. קבוצה נכנסת לתור רק אחרי שמסמנים "שולם". אישור התשלום כאן מדומה: אין חיוב ואין סליקה.</p>
+            <p className="meta">הרשמות שהלקוחות שלחו מהטופס. בוחרים סוג כרטיס ומסמנים "שולם": הקבוצה נכנסת לתור והמקצים מסתדרים לבד (טיוטה, הקופאית מאשרת). אישור התשלום כאן מדומה: אין חיוב ואין סליקה.</p>
             {pending.length === 0 && <p className="empty">אין הרשמות שממתינות. לקוחות נרשמים בלשונית "הרשמה".</p>}
             <ul className="list">
-                {pending.map(sb => <li key={sb.id} className="item pending">
-                    <div className="itop"><strong>{sb.groupName}</strong><span className="big">{sb.names.length}</span></div>
-                    <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}</div>
-                    <div className="names-list">{sb.names.join(' · ')}</div>
-                    <div className="actions">
-                        <Btn kind="primary" small onClick={() => update(c => L.markPaid(c, sb.id, Date.now()))}>שולם · הכנס לתור</Btn>
-                        <Btn kind="danger" small onClick={() => update(c => L.cancelSubmission(c, sb.id))}>בטל הרשמה</Btn>
-                    </div>
-                </li>)}
+                {pending.map(sb => <PendingItem key={sb.id} core={core} update={update} sb={sb} />)}
             </ul>
         </Group>
         <div className="row-actions"><Btn small onClick={() => setManual(!manual)}>{manual ? 'סגור הוספה ידנית' : 'הוספה ידנית בקופה (בלי טופס)'}</Btn></div>
@@ -158,7 +180,8 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
                 <Stepper label="כמה משתתפים" value={size} min={1} max={30} onChange={setSize} />
                 <div className="field"><span className="flabel">מה נקנה</span>
                     <div className="chips" role="radiogroup" aria-label="סוג כרטיס">
-                        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={ticket === t} className={`chip${ticket === t ? ' sel' : ''}`} onClick={() => setTicket(t)}>{t}</button>)}
+                        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={ticket === t} className={`chip${ticket === t ? ' sel' : ''}`} onClick={() => setTicket(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}</button>)}
+                        <button type="button" aria-pressed={fam} className={`chip${fam ? ' sel' : ''}`} onClick={() => setFam(!fam)}>משפחה</button>
                     </div>
                 </div>
                 <div className="field"><span className="flabel">שיבוץ</span>
@@ -185,7 +208,7 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
                     const locked = core.heats.some(h => h.status !== 'draft' && h.entries.some(e => e.groupId === g.id));
                     return <li key={g.id} className="item">
                         <div className="itop"><strong>{g.name}</strong><span className="big">{g.size}</span></div>
-                        <div className="meta">{g.ticket || 'ללא סוג'} · {g.keepTogether ? 'לשמור יחד' : 'אפשר לפצל'} · {timeOf(g.createdAt)}</div>
+                        <div className="meta"><GroupTags core={core} g={g} /> {g.keepTogether ? 'לשמור יחד' : 'אפשר לפצל'} · {timeOf(g.createdAt)}</div>
                         {g.note && <div className="meta">הערה: {g.note}</div>}
                         {g.names && <div className="names-list">{g.names.join(' · ')}</div>}
                         <div className="meta">{over.has(g.id) ? 'לא משובצת: גדולה מהקיבולת' : left === g.size ? 'ממתינה לשיבוץ' : left > 0 ? `חלק לא משובץ (${left})` : `משובצת במקצה ${heats.join(', ')}`}{split.has(g.id) ? ' · פוצלה, לבדוק' : ''}</div>
@@ -266,12 +289,13 @@ function Heats({ core, update }: { core: L.Core; update: Update }) {
                         <span className={`badge ${b.cls}`}>{b.text}</span>
                     </div>
                     <div className="bar" aria-hidden="true"><i style={{ width: `${Math.min(100, (n / cap) * 100)}%` }} className={over ? 'over' : ''} /></div>
-                    <div className="meta">{n} מתוך {cap}{core.live?.heatId === h.id ? ' · נעול בזמן שהוא על המסלול' : ''}</div>
+                    <div className="meta">{n} מתוך {cap}{L.heatClasses(core, h).has('fast') ? ' · ⚡ מכוניות מהירות' : ''}{core.live?.heatId === h.id ? ' · נעול בזמן שהוא על המסלול' : ''}</div>
+                    {L.mixesClasses(core, h) && <div className="warn">מכוניות מהירות (ליגה/מאסטר) ורגילות באותו מקצה. מותר רק למשפחה. אי אפשר לאשר עד שמפרידים.</div>}
                     <ul className="entries">
                         {h.entries.map(e => {
                             const g = core.groups.find(x => x.id === e.groupId);
                             return <li key={e.groupId}>
-                                <span>{g?.name ?? '?'} <b>{e.count}</b>{split.has(e.groupId) ? ` מתוך ${g?.size}` : ''}{split.has(e.groupId) && <em className="warn"> פוצלה</em>}</span>
+                                <span>{g?.name ?? '?'} <b>{e.count}</b> {g && <GroupTags core={core} g={g} />}{split.has(e.groupId) ? ` מתוך ${g?.size}` : ''}{split.has(e.groupId) && <em className="warn"> פוצלה</em>}</span>
                                 {canEdit && <span className="moves" role="group" aria-label={`פעולות על ${g?.name}`}>
                                     <button type="button" className="kb ghost sm" onClick={() => act(c => L.removeFromHeat(c, e.groupId, h.id))}>החזר להמתנה</button>
                                     {targets.map(d => {
@@ -282,7 +306,7 @@ function Heats({ core, update }: { core: L.Core; update: Update }) {
                             </li>;
                         })}
                     </ul>
-                    {canEdit && waiting.length > 0 && <div className="moves" role="group" aria-label="הוסף קבוצה למקצה">{waiting.map(g => { const left = L.unassignedOf(core, g); const free = cap - n; const blocked = free <= 0 || (g.keepTogether && left > free); return <button key={g.id} type="button" className="kb ghost sm add" disabled={blocked} onClick={() => act(c => L.addToHeat(c, g.id, h.id))}>{`+ ${g.name} (${left})`}</button>; })}</div>}
+                    {canEdit && waiting.length > 0 && <div className="moves" role="group" aria-label="הוסף קבוצה למקצה">{waiting.map(g => { const left = L.unassignedOf(core, g); const free = cap - n; const blocked = free <= 0 || (g.keepTogether && left > free) || !L.fitsClass(core, h, g); return <button key={g.id} type="button" className="kb ghost sm add" disabled={blocked} onClick={() => act(c => L.addToHeat(c, g.id, h.id))}>{`+ ${g.name} (${left})`}</button>; })}</div>}
                     {h.entries.length > 0 && h.status !== 'done' && <div className="actions"><Btn small onClick={() => setOpenDrv(openDrv === h.id ? null : h.id)}>{openDrv === h.id ? 'סגור שמות וקארטים' : 'שמות וקארטים'}</Btn></div>}
                     {openDrv === h.id && h.status !== 'done' && <DriverEditor core={core} heat={h} update={update} />}
                     {h.status === 'draft' && h.entries.length > 0 && !over && !L.canApprove(core, h) && <div className="meta warn">{L.kartConflicts(core, h).length ? 'אי אפשר לאשר: קארט כפול.' : 'אי אפשר לאשר: במצב "הקופאית בוחרת" צריך לבחור קארט לכל נהג.'}</div>}
@@ -634,7 +658,9 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
                 <p className="meta">פתוח: עוד לא הוחלט. "הקופאית בוחרת" דורש קארט לכל נהג לפני אישור. "הצוות מקצה" מציג במסך "הצוות יקצה" עד שנבחר קארט. אין זיהוי אוטומטי של קארטים שחונים במסלול.</p>
             </div>
             <div className="field"><span className="flabel">סוגי כרטיס</span>
-                <div className="chips">{s.tickets.map(x => <button key={x} type="button" className="chip" onClick={() => s.tickets.length > 1 && upd({ tickets: s.tickets.filter(y => y !== x) })} aria-label={`הסר ${x}`}>{x} ✕</button>)}</div>
+                <div className="chips">{s.tickets.map(x => <button key={x} type="button" className="chip" onClick={() => s.tickets.length > 1 && upd({ tickets: s.tickets.filter(y => y !== x), fastTickets: (s.fastTickets ?? []).filter(y => y !== x) })} aria-label={`הסר ${x}`}>{x} ✕</button>)}</div>
+                <span className="flabel">מכוניות מהירות (לא משובצים עם רגילות, חוץ ממשפחה)</span>
+                <div className="chips">{s.tickets.map(x => { const on = L.isFastTicket(core, x); return <button key={x} type="button" aria-pressed={on} className={`chip${on ? ' sel' : ''}`} onClick={() => upd({ fastTickets: on ? (s.fastTickets ?? L.DEFAULT_FAST_TICKETS).filter(y => y !== x) : [...(s.fastTickets ?? L.DEFAULT_FAST_TICKETS), x] })}>⚡ {x}</button>; })}</div>
                 <div className="inline"><input className="inp" value={t} onChange={e => setT(e.target.value)} placeholder="סוג חדש" maxLength={24} /><Btn onClick={() => { const v = t.trim(); if (v && !s.tickets.includes(v)) { upd({ tickets: [...s.tickets, v] }); setT(''); } }}>הוסף</Btn></div>
                 <p className="meta">שמות בלבד. האפליקציה לא מחזיקה מחירים ולא גובה תשלום.</p>
             </div>
@@ -666,6 +692,8 @@ export function App() {
     const [auto, setAutoRaw] = useState(false);
     const [now, setNow] = useState(() => Date.now());
     const ready = savedCore.ready && savedHist.ready;
+    // Saved data from before the four ticket types gets the real ticket list once.
+    useEffect(() => { if (ready) { const m = L.migrateTickets(core); if (m !== core) setCoreRaw(m); } }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Public website: staff session + "broadcast" switch (per device). Publishes the board on every change.
     const [session, setSession] = useState<Session | null>(null);

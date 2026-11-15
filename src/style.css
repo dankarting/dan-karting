@@ -350,3 +350,7 @@ body { background: #0b0b0c; }
 .pub, .pub-wait { padding: 0; }
 .gate-title { font-size: 24px; margin: 0; }
 .gate { display: grid; gap: 12px; width: min(340px, 100%); text-align: start; }
+.gtags { display: inline-flex; gap: 4px; flex-wrap: wrap; vertical-align: middle; }
+.gtag { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--dk-line); color: var(--dk-muted); }
+.gtag.fast { border-color: var(--dk-yellow); color: var(--dk-yellow); }
+.gtag.fam { border-color: #2f7cf6; color: #8fb6ff; }
