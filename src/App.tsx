@@ -350,7 +350,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
             <Lights state={p.state} />
             <div className="tb-title"><div className="tb-heat">{p.title}</div><div className="tb-sub">{p.sub}</div></div>
             <div className="tb-clocks">
-                {p.countdown != null && <div className="tb-count" aria-label="זמן משוער שנותר"><small>נותר</small><bdi>{p.countdown}</bdi></div>}
+                {p.countdown != null && <div className="tb-count" aria-label="זמן שנותר"><small>נותר</small><bdi>{p.countdown}</bdi></div>}
                 {p.clock && <div className="tb-elapsed"><small>זמן</small><bdi>{p.clock}</bdi></div>}
             </div>
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
@@ -366,7 +366,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
                 <span className="tb-last"><bdi>{L.fmt(r.last)}</bdi></span>
                 <span className={`tb-best${r.isBest ? ' ob' : ''}`}><bdi>{L.fmt(r.best)}</bdi></span>
                 <span className="tb-gap"><bdi>{r.gap}</bdi></span>
-                <span className="tb-laps">{r.laps}/{p.totalLaps}{r.finished ? ' ✓' : ''}</span>
+                <span className="tb-laps">{p.totalLaps ? `${r.laps}/${p.totalLaps}` : r.laps}{r.finished ? ' ✓' : ''}</span>
             </li>)}
         </ol>
         <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה · <span className="pb">ירוק</span> שיא אישי · ▲▼ מקומות לעומת הזינוק</div>
@@ -442,11 +442,27 @@ export function TrackScreen({ core, now, onClose }: { core: L.Core; now: number;
         const done = L.allFinished(timing);
         const called = L.calledHeat(core);
         const el = L.elapsedOf(core.live, now);
-        return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={done ? 'הסתיים · תוצאות' : 'על המסלול · בלייב'} totalLaps={core.settings.laps} state={done ? 'done' : 'live'}
-            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose}
+        const left = L.timeLeft(core.live, now);
+        const timed = left != null;
+        const sub = done ? 'הסתיים · תוצאות' : timed && left === 0 ? 'הזמן נגמר · הקפה אחרונה' : 'על המסלול · בלייב';
+        return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={timed ? `${sub} · ${Math.round(core.live!.durationMs! / 60_000)} דק׳` : sub} totalLaps={timed ? 0 : core.settings.laps} state={done ? 'done' : 'live'}
+            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose}
             footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} />;
     }
     return <CallDisplay core={core} state={sc.state === 'race' ? 'empty' : sc.state} heat={sc.heat} onClose={onClose} />;
+}
+
+/** Heat length picker: 10 minutes is the minimum, 20 the other common option, or any value up to 30. */
+function HeatMinutes({ core, update }: { core: L.Core; update: Update }) {
+    const m = L.heatMinutesOf(core);
+    const set = (n: number) => update(c => ({ ...c, settings: { ...c.settings, heatMinutes: n } }));
+    return <div className="field"><span className="flabel">זמן מקצה (דקות)</span>
+        <div className="chips" role="radiogroup" aria-label="זמן מקצה">
+            {L.HEAT_MINUTE_OPTIONS.map(n => <button key={n} type="button" role="radio" aria-checked={m === n} className={`chip${m === n ? ' sel' : ''}`} onClick={() => set(n)}>{n} דק׳</button>)}
+        </div>
+        <Stepper label="או ערך אחר" value={m} min={L.MIN_HEAT_MINUTES} max={L.MAX_HEAT_MINUTES} onChange={set} />
+        <p className="meta">המינימום 10 דקות. הזמן נקבע ברגע הלחיצה על "התחל מקצה". כשהזמן נגמר, כל נהג מסיים את ההקפה שהוא נמצא בה ואז מוצגות התוצאות.</p>
+    </div>;
 }
 
 // --------------------------------------------------------------------- live
@@ -467,8 +483,8 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
     const calledH = L.calledHeat(core);
     const lastRes = hist[0];
     const nextUp = calledH ?? qList[0];
-    const autoNext = !auto ? '' : heat ? (done ? 'הדמו: מציג תוצאות, קורא למקצה הבא ושומר לבד.' : 'הדמו: המקצה על המסלול. כשיסתיים, התוצאות יוצגו וישמרו לבד.')
-        : calledH ? (L.startBlockers(core, calledH).length ? `הדמו ממתין: מקצה ${calledH.num} לא יכול לעלות (${L.startBlockers(core, calledH).join(', ')}).` : `הדמו: מקצה ${calledH.num} נקרא, יתחיל עוד רגע.`)
+    const autoNext = !auto ? '' : heat ? (done ? 'הדמו: מציג תוצאות, קורא למקצה הבא ושומר לבד.' : 'הדמו: המקצה על המסלול. כשהזמן ייגמר והנהגים יסיימו את ההקפה, התוצאות יוצגו וישמרו לבד.')
+        : calledH ? (L.startBlockers(core, calledH).length ? `הדמו ממתין: מקצה ${calledH.num} לא יכול לעלות (${L.startBlockers(core, calledH).join(', ')}).` : `הדמו: מקצה ${calledH.num} נקרא. לחץ "התחל מקצה" כשהנהגים מוכנים.`)
             : qList[0] ? `הדמו: יקרא למקצה ${qList[0].num} עוד רגע.` : 'הדמו ממתין: אין מקצה מאושר בתור. אשר מקצה בלשונית מקצים.';
 
     return <Group label="מסלול ותור" heading>
@@ -480,12 +496,14 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
             {!heat && <Btn onClick={() => { update(c => L.demoSetup(c, Date.now())); setAuto(true); openScreen('track'); }}>⚡ הדגמה מלאה בלחיצה</Btn>}
             <Btn small onClick={() => update(L.fillDemoNames)}>מלא שמות דמו</Btn>
         </div>
-        <p className="meta">{auto ? autoNext : 'תור פשוט, בלי שעות: המקצים המאושרים לפי הסדר. "מסך מסלול" הוא המסך הגדול באתר: הוא עובר לבד בין קריאה, הבא בתור ומירוץ. בדמו האוטומטי המסך קורא, מתחיל, מציג תוצאות וממשיך לבד. הקופאית יכולה לשנות הרכב בכל שלב בלשונית מקצים.'}</p>
+        <p className="meta">{auto ? autoNext : 'תור פשוט, בלי שעות: המקצים המאושרים לפי הסדר. "מסך מסלול" הוא המסך הגדול באתר: הוא עובר לבד בין קריאה, הבא בתור ומירוץ. בדמו האוטומטי המסך קורא, מציג תוצאות וממשיך לבד, אבל מקצה מתחיל רק בלחיצה על "התחל מקצה". הקופאית יכולה לשנות הרכב בכל שלב בלשונית מקצים.'}</p>
 
         {heat && <section className="panel ontrack" aria-label="על המסלול">
             <div className="row-actions">
                 <strong className="hnum">על המסלול · מקצה {heat.num}</strong>
-                <span className="clock" aria-label="זמן שעבר">{L.fmt(Math.min(L.raceClock(timing, elapsed), 3_600_000))}</span>
+                {L.timeLeft(core.live, now) != null
+                    ? <span className="clock" aria-label="זמן שנותר">נותר {mmss(L.timeLeft(core.live, now)!)}</span>
+                    : <span className="clock" aria-label="זמן שעבר">{L.fmt(Math.min(L.raceClock(timing, elapsed), 3_600_000))}</span>}
             </div>
             <div className="chips" role="radiogroup" aria-label="מהירות סימולציה">
                 {SPEEDS.map(s => <button key={s} type="button" role="radio" aria-checked={core.live?.speed === s} className={`chip${core.live?.speed === s ? ' sel' : ''}`} onClick={() => update(c => L.setSpeed(c, s, Date.now()))}>x{s}</button>)}
@@ -494,7 +512,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
                 {rows.map(r => <li key={r.key} className="brow">
                     <span className="pos">{r.pos}</span>
                     <span className="kart">{r.kart}</span>
-                    <span className="who">{r.label}<small>{r.laps}/{core.settings.laps} הקפות{r.finished ? ' · סיים' : ''}</small></span>
+                    <span className="who">{r.label}<small>{core.live?.durationMs ? `${r.laps} הקפות` : `${r.laps}/${core.settings.laps} הקפות`}{r.finished ? ' · סיים' : ''}</small></span>
                     <span className="times"><b className={r.isBest ? 'best' : ''}><bdi>{L.fmt(r.best)}</bdi></b><small>אחרונה <bdi>{L.fmt(r.last)}</bdi></small>{r.gap && <small><bdi>{r.gap}</bdi></small>}</span>
                 </li>)}
             </ol>
@@ -506,6 +524,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
         </section>}
 
         <h3 className="subhead">התור ({qList.length})</h3>
+        {!heat && <HeatMinutes core={core} update={update} />}
         {!heat && !calledH && nextUp && <div className="row-actions"><Btn kind="primary" onClick={() => update(c => L.callHeat(c, nextUp.id))}>{`קרא למסלול: מקצה ${nextUp.num}`}</Btn></div>}
         {qList.length === 0 ? <div className="empty"><p>אין מקצה מאושר בתור.</p><Btn onClick={goHeats}>למקצים</Btn></div> : <ol className="list queue">
             {qList.map((h, i) => {
@@ -515,7 +534,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
                     <div className="meta">{L.heatCount(h)} נהגים · {L.driversOf(core, h).map(d => `${d.label} (${d.kart})`).join(', ')}</div>
                     <div className="actions">
                         {h.called ? <Btn small onClick={() => update(c => L.uncallHeat(c, h.id))}>בטל קריאה</Btn> : <Btn small disabled={!!calledH} onClick={() => update(c => L.callHeat(c, h.id))}>קרא למסלול</Btn>}
-                        <Btn kind="primary" small disabled={blockers.length > 0} onClick={() => start(h.id)}>{h.called ? 'התחל מקצה' : 'התחל בלי קריאה'}</Btn>
+                        <Btn kind="primary" small disabled={blockers.length > 0} onClick={() => start(h.id)}>{h.called ? `▶ התחל מקצה (${L.heatMinutesOf(core)} דק׳)` : 'התחל בלי קריאה'}</Btn>
                         <Btn small onClick={() => setEditId(editId === h.id ? null : h.id)}>{editId === h.id ? 'סגור' : 'שמות וקארטים'}</Btn>
                         <Btn small onClick={goHeats}>שנה הרכב</Btn>
                     </div>
@@ -607,7 +626,7 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
             </div>
             <Stepper label="או ערך אחר" value={s.capacity} min={L.MIN_CAP} max={L.MAX_CAP} onChange={n => upd({ capacity: n })} />
             <p className="meta">פתוח: הוזכרו 10 וגם 14, הערך הנכון לא אושר. ברירת המחדל 10. אחרי שינוי לחץ "שבץ מחדש" בלשונית מקצים.{overDraft > 0 ? ` ${overDraft} טיוטות חורגות עכשיו.` : ''}{overQueued > 0 ? ` ${overQueued} מקצים בתור חורגים ולא יעלו למסלול עד שיתוקנו.` : ''}</p>
-            <Stepper label="הקפות במקצה (בסימולציה)" value={s.laps} min={2} max={20} onChange={n => upd({ laps: n })} />
+            <HeatMinutes core={core} update={update} />
             <div className="field"><span className="flabel">מי קובע קארט לנהג</span>
                 <div className="chips" role="radiogroup" aria-label="שיוך קארט">
                     {([['unset', 'עוד לא הוחלט (הצעה, אפשר לערוך)'], ['cashier', 'הקופאית בוחרת עם השמות'], ['staff', 'הצוות מקצה בעלייה']] as [L.KartMode, string][]).map(([k, label]) => <button key={k} type="button" role="radio" aria-checked={L.kartMode(core) === k} className={`chip${L.kartMode(core) === k ? ' sel' : ''}`} onClick={() => upd({ kartMode: k })}>{label}</button>)}
@@ -703,7 +722,7 @@ export function App() {
             if (!called && next && age >= DEMO.callAfterMs) update(x => L.callHeat(x, next.id));
             if (age >= DEMO.resultsHoldMs) save();
         } else if (called) {
-            if (age >= DEMO.startAfterMs && L.startBlockers(c, called).length === 0) start(called.id);
+            // A heat never starts by itself: staff press "התחל מקצה" after the drivers are seated.
         } else if (next && age >= DEMO.callAfterMs) {
             update(x => L.callHeat(x, next.id));
         }

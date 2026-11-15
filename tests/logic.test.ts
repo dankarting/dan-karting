@@ -349,5 +349,31 @@ test('form names continue across heats when a paid group is split', () => {
     assert.deepEqual(c.heats.map(h => L.driversOf(c, h).map(d => d.label)), [['א1', 'א2'], ['א3', 'א4'], ['א5']]);
 });
 
+test('timed heat: default 10 min, 20 possible, min 10; ends after the lap in progress when time is up', () => {
+    let q = twoQueued();
+    const h1 = q.heats[0];
+    assert.equal(L.heatMinutesOf(q), 10, 'default 10 minutes');
+    assert.equal(L.heatMinutesOf({ ...q, settings: { ...q.settings, heatMinutes: 5 } }), 10, '10 is the minimum');
+    q = { ...q, settings: { ...q.settings, heatMinutes: 20 } };
+    q = L.startHeat(q, h1.id, 0, 7, 1);
+    assert.equal(q.live?.durationMs, 20 * 60_000, 'duration fixed at start');
+    assert.equal(L.timeLeft(q.live, 60_000), 19 * 60_000);
+    // changing the setting during the heat does not change the running heat
+    const q2 = { ...q, settings: { ...q.settings, heatMinutes: 10 } };
+    assert.equal(L.timeLeft(q2.live, 60_000), 19 * 60_000);
+    const atEnd = L.liveTiming(q, 20 * 60_000 - 1);
+    assert.ok(!L.allFinished(atEnd), 'not finished before the clock runs out');
+    assert.equal(L.timeLeft(q.live, 21 * 60_000), 0);
+    const after = L.liveTiming(q, 22 * 60_000); // > 20 min + one lap (laps are under 50 s)
+    assert.ok(L.allFinished(after), 'everyone finishes the lap in progress');
+    for (const r of after) {
+        assert.ok(r.total >= 20 * 60_000, 'last lap crosses after the clock ran out');
+        assert.ok(r.total - r.laps[r.laps.length - 1] < 20 * 60_000, 'no extra lap after that');
+    }
+    assert.ok(after[0].laps.length > 8, 'a 20 minute heat is not capped at the old lap count');
+    const { result } = L.finishRun(q, 22 * 60_000);
+    assert.equal(result?.minutes, 20);
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
