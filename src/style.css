@@ -363,3 +363,11 @@ body { background: #0b0b0c; }
 .price-line b { font-size: 22px; color: var(--dk-yellow); }
 .price-line small { flex-basis: 100%; color: var(--dk-muted); font-size: 12px; }
 .price-inp { width: 120px; }
+/* public heat history */
+.pub-hbtn { position: fixed; bottom: 10px; inset-inline-end: 12px; z-index: 60; font: inherit; font-size: 14px; font-weight: 700; color: #fff; background: rgba(0,0,0,.65); border: 1px solid #555; padding: 8px 14px; border-radius: 99px; cursor: pointer; }
+.pub-hbtn:hover { border-color: #ff4d4d; }
+.pub-hist { max-width: 760px; margin: 0 auto; padding: 16px; min-height: 100vh; }
+.pub-hist-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+/* second seat of a two-seat (זוגי) kart */
+.trow.partner { padding-inline-start: 18px; border-inline-start: 3px solid var(--accent, #e10600); }
+.pair-note { font-size: 12px; }

@@ -427,12 +427,13 @@ test('ticket per participant in the form; price total; mixed non-family registra
     assert.deepEqual(f.groups[0].tickets, ['רגיל', 'ליגה', 'רגיל']);
 });
 
-test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאסטר 100, ליגה not priced yet', () => {
+test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאסטר 100, ליגה 87; 20 min = 100', () => {
     const c = L.initialCore();
     assert.deepEqual(L.priceOf(c, ['רגיל', 'רגיל', 'מאסטר']), { total: 274, missing: [] });
     assert.equal(L.priceOf(c, ['זוגי', 'זוגי']).total, 100, 'two people share one double kart');
     assert.equal(L.priceOf(c, ['זוגי', 'זוגי', 'זוגי']).total, 200);
-    assert.deepEqual(L.priceOf(c, ['ליגה']).missing, ['ליגה']);
+    assert.deepEqual(L.priceOf(c, ['ליגה']), { total: 87, missing: [] });
+    assert.deepEqual(L.priceOf(c, ['רגיל', 'ליגה'], 20), { total: 200, missing: [] });
     const old = { ...c, settings: { ...c.settings, tickets: ['יחיד', 'זוגי', 'ליגה', 'מאסטר'], prices: undefined } };
     const m = L.migrateTickets(old);
     assert.deepEqual(m.settings.tickets, ['רגיל', 'זוגי', 'ליגה', 'מאסטר']);
@@ -441,3 +442,13 @@ test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאס�
 
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
+
+test('10- and 20-minute groups never share a heat', () => {
+    let c = L.initialCore();
+    let r = L.submitForm(c, 'קצר', ['א', 'ב'], 1, ['רגיל', 'רגיל'], 10); c = L.markPaidAndPlan(r.core, r.id!, 2);
+    r = L.submitForm(c, 'ארוך', ['ג', 'ד'], 3, ['רגיל', 'רגיל'], 20); c = L.markPaidAndPlan(r.core, r.id!, 4);
+    assert.equal(c.groups.find(g => g.name === 'ארוך')?.minutes, 20);
+    const heatOf = (n: string) => c.heats.find(h => h.entries.some(e => e.groupId === c.groups.find(g => g.name === n)!.id))!;
+    assert.notEqual(heatOf('קצר').id, heatOf('ארוך').id);
+    assert.equal(L.minutesOfHeat(c, heatOf('ארוך')), 20);
+});

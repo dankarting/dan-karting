@@ -15,6 +15,8 @@ export type Group = {
     family?: boolean;
     /** Ticket per participant (same order as names), when chosen per person in the form. */
     tickets?: string[];
+    /** Heat length this group paid for (10 / 20). Unset = the default in Settings. Groups of different lengths never share a heat. */
+    minutes?: number;
 };
 
 /**
@@ -23,7 +25,9 @@ export type Group = {
  */
 export type Submission = { id: string; groupName: string; names: string[]; createdAt: number; status: 'pending' | 'paid' | 'cancelled'; groupId?: string; groupIds?: string[];
     /** Ticket per participant, same order as names (chosen by the customer in the form). */
-    tickets?: string[] };
+    tickets?: string[];
+    /** Heat length the customer chose (10 or 20). */
+    minutes?: number };
 
 export type Entry = { groupId: string; count: number };
 export type HeatStatus = 'draft' | 'approved' | 'done';
@@ -42,6 +46,8 @@ export type Settings = {
     fastTickets?: string[];
     /** Price per ticket type in shekels. Set by the owner in Settings; unset = no price shown. Display only, nothing is charged. */
     prices?: Record<string, number>;
+    /** Price per ticket type for a 20-minute heat. */
+    prices20?: Record<string, number>;
     /** Ticket types where two participants share one kart and pay one price (זוגי). */
     pairTickets?: string[];
     kartMode?: KartMode;
@@ -73,7 +79,9 @@ export const DEFAULT_TICKETS = ['רגיל', 'זוגי', 'ליגה', 'מאסטר'
 export const DEFAULT_FAST_TICKETS = ['ליגה', 'מאסטר'];
 /** From the venue price board (photo, 2026-11-15), per 10-minute heat: karting 87, two-seat kart with adult 100 (per kart),
  *  Master 100. League has no price on the board yet. */
-export const DEFAULT_PRICES: Record<string, number> = { 'רגיל': 87, 'זוגי': 100, 'מאסטר': 100 };
+export const DEFAULT_PRICES: Record<string, number> = { 'רגיל': 87, 'זוגי': 100, 'ליגה': 87, 'מאסטר': 100 };
+/** 20-minute heat (owner, 2026-11-15): 100. League is priced like regular. Others not given yet. */
+export const DEFAULT_PRICES20: Record<string, number> = { 'רגיל': 100, 'ליגה': 100 };
 /** Two-seat kart: two participants share one kart and one price ("רכב זוגי בליווי מבוגר"). */
 export const DEFAULT_PAIR_TICKETS = ['זוגי'];
 const OLD_DEFAULT_TICKETS = ['קארטינג', 'כרטיס משולב'];
@@ -89,6 +97,8 @@ export function migrateTickets(core: Core): Core {
     if (st.tickets.includes('יחיד') && !st.tickets.includes('רגיל')) st = { ...st, tickets: st.tickets.map(x => (x === 'יחיד' ? 'רגיל' : x)) };
     if (!st.prices) st = { ...st, prices: Object.fromEntries(Object.entries(DEFAULT_PRICES).filter(([k]) => st.tickets.includes(k))) };
     if (!st.pairTickets) st = { ...st, pairTickets: [...DEFAULT_PAIR_TICKETS] };
+    if (st.prices && st.prices['ליגה'] == null && st.tickets.includes('ליגה')) st = { ...st, prices: { ...st.prices, 'ליגה': DEFAULT_PRICES['ליגה'] } };
+    if (!st.prices20) st = { ...st, prices20: Object.fromEntries(Object.entries(DEFAULT_PRICES20).filter(([k]) => st.tickets.includes(k))) };
     if (st === core.settings) return core;
     const ren = (x: string) => (x === 'יחיד' ? 'רגיל' : x);
     return { ...core, settings: st, groups: core.groups.map(g => ({ ...g, ticket: ren(g.ticket), tickets: g.tickets?.map(ren) })),
@@ -107,16 +117,30 @@ export function heatClasses(core: Core, h: Heat): Set<KartClass> {
 }
 /** Fast and regular karts in the same heat, with a non-family group on each side. */
 export const mixesClasses = (core: Core, h: Heat) => heatClasses(core, h).size > 1;
-/** Can group g join heat h without mixing fast and regular karts? */
+/** Heat length of a group: what it paid for, else the default. */
+export const groupMinutes = (core: Core, g: Group) => g.minutes ?? heatMinutesOf(core);
+/** Heat lengths present in a heat (one value when consistent). */
+export function heatMinutesSet(core: Core, h: Heat): Set<number> {
+    const out = new Set<number>();
+    for (const e of h.entries) { const g = core.groups.find(x => x.id === e.groupId); if (g) out.add(groupMinutes(core, g)); }
+    return out;
+}
+/** Minutes this heat runs: its groups' length, else the default. */
+export const minutesOfHeat = (core: Core, h: Heat) => [...heatMinutesSet(core, h)][0] ?? heatMinutesOf(core);
+export const mixesMinutes = (core: Core, h: Heat) => heatMinutesSet(core, h).size > 1;
+
+/** Can group g join heat h without mixing fast and regular karts, or 10- and 20-minute groups? */
 export function fitsClass(core: Core, h: Heat, g: Group): boolean {
+    const mins = heatMinutesSet(core, h);
+    if (mins.size > 0 && !mins.has(groupMinutes(core, g))) return false;
     if (g.family) return true;
     const cls = heatClasses(core, h);
     return cls.size === 0 || (cls.size === 1 && cls.has(classOf(core, g)));
 }
 
 /** Price total for a list of tickets. `missing` lists ticket types that have no price yet. Display only. */
-export function priceOf(core: Core, tickets: string[]): { total: number; missing: string[] } {
-    const p = core.settings.prices ?? {};
+export function priceOf(core: Core, tickets: string[], minutes = 10): { total: number; missing: string[] } {
+    const p = (minutes >= 20 ? core.settings.prices20 : core.settings.prices) ?? {};
     const pair = new Set(core.settings.pairTickets ?? DEFAULT_PAIR_TICKETS);
     const count = new Map<string, number>(); tickets.forEach(t => count.set(t, (count.get(t) ?? 0) + 1));
     let total = 0; const missing: string[] = [];
@@ -132,7 +156,7 @@ export const MIN_CAP = 1;
 export const MAX_CAP = 30;
 
 export const initialCore = (): Core => ({
-    settings: { capacity: 10, laps: 8, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS], prices: { ...DEFAULT_PRICES }, pairTickets: [...DEFAULT_PAIR_TICKETS] },
+    settings: { capacity: 10, laps: 8, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS], prices: { ...DEFAULT_PRICES }, prices20: { ...DEFAULT_PRICES20 }, pairTickets: [...DEFAULT_PAIR_TICKETS] },
     groups: [],
     heats: [],
     nextHeatNum: 1,
@@ -354,6 +378,7 @@ export function startBlockers(core: Core, h: Heat): string[] {
     if (overCapacity(h, core.settings.capacity)) out.push(`מעל הקיבולת (${core.settings.capacity})`);
     if (kartConflicts(core, h).length) out.push('קארט כפול');
     if (mixesClasses(core, h)) out.push('מכוניות מהירות ורגילות באותו מקצה');
+    if (mixesMinutes(core, h)) out.push('קבוצות של 10 ו-20 דקות באותו מקצה');
     return out;
 }
 
@@ -363,7 +388,7 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
     if (!h || core.live || startBlockers(core, h).length) return core;
     return {
         ...core,
-        live: { heatId, t0: now, seed, speed, durationMs: heatMinutesOf(core) * 60_000 },
+        live: { heatId, t0: now, seed, speed, durationMs: minutesOfHeat(core, h) * 60_000 },
         heats: core.heats.map(x => (x.id === heatId ? { ...x, called: false } : x)),
     };
 }
@@ -498,7 +523,7 @@ export const kartMode = (core: Core): KartMode => core.settings.kartMode ?? 'uns
 /** A heat may be approved when karts do not clash and, in cashier mode, every kart was chosen on purpose. */
 export function canApprove(core: Core, heat: Heat): boolean {
     if (kartConflicts(core, heat).length) return false;
-    if (mixesClasses(core, heat)) return false;
+    if (mixesClasses(core, heat) || mixesMinutes(core, heat)) return false;
     if (kartMode(core) === 'cashier' && driversOf(core, heat).some(d => !d.kartSet)) return false;
     return true;
 }
@@ -815,7 +840,7 @@ export const MAX_FORM_NAMES = 30;
 export const pendingOf = (core: Core): Submission[] => (core.submissions ?? []).filter(s => s.status === 'pending');
 
 /** Validate and store a form. Returns the new id, or an error (Hebrew) and the unchanged core. */
-export function submitForm(core: Core, groupName: string, names: string[], now: number, tickets?: string[]): { core: Core; id?: string; error?: string } {
+export function submitForm(core: Core, groupName: string, names: string[], now: number, tickets?: string[], minutes?: number): { core: Core; id?: string; error?: string } {
     const gn = groupName.trim().slice(0, 40);
     const keep = names.map((x, i) => ({ n: x.trim().slice(0, 24), t: tickets?.[i] })).filter(x => x.n);
     const ns = keep.map(x => x.n);
@@ -824,11 +849,11 @@ export function submitForm(core: Core, groupName: string, names: string[], now: 
     if (ns.length === 0) return { core, error: 'צריך לפחות משתתף אחד' };
     if (ns.length > MAX_FORM_NAMES) return { core, error: `עד ${MAX_FORM_NAMES} משתתפים בטופס אחד` };
     const id = `s${core.seq}`;
-    return { core: { ...core, seq: core.seq + 1, submissions: [...(core.submissions ?? []), { id, groupName: gn, names: ns, createdAt: now, status: 'pending', ...(ts ? { tickets: ts } : {}) }] }, id };
+    return { core: { ...core, seq: core.seq + 1, submissions: [...(core.submissions ?? []), { id, groupName: gn, names: ns, createdAt: now, status: 'pending', ...(ts ? { tickets: ts } : {}), ...(minutes ? { minutes: minutes >= 20 ? 20 : 10 } : {}) }] }, id };
 }
 
 /** Staff confirm payment (simulated). The group enters the waiting list for heats with its names. */
-export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[] } = {}): Core {
+export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[]; minutes?: number } = {}): Core {
     const s = (core.submissions ?? []).find(x => x.id === subId);
     if (!s || s.status !== 'pending') return core;
     const fallback = opts.ticket ?? core.settings.tickets[0] ?? '';
@@ -846,7 +871,8 @@ export function markPaid(core: Core, subId: string, now: number, opts: { keepTog
         c = addGroup(c, { name: part.name, size: part.idx.length, ticket: main, keepTogether: opts.keepTogether ?? true, note: '' }, now);
         const g = c.groups[c.groups.length - 1];
         ids.push(g.id);
-        c = { ...c, groups: c.groups.map(x => (x.id === g.id ? { ...x, names: part.idx.map(i => s.names[i]), family, tickets: ts } : x)) };
+        const minutes = opts.minutes ?? s.minutes;
+        c = { ...c, groups: c.groups.map(x => (x.id === g.id ? { ...x, names: part.idx.map(i => s.names[i]), family, tickets: ts, ...(minutes ? { minutes } : {}) } : x)) };
     }
     return { ...c, submissions: (core.submissions ?? []).map(x => (x.id === subId ? { ...x, status: 'paid' as const, groupId: ids[0], groupIds: ids, tickets: per } : x)) };
 }
@@ -857,7 +883,7 @@ function mostCommon(xs: string[]): string | undefined {
 }
 
 /** Paid -> into the queue AND re-suggest the draft heats, so heats build themselves as people pay. Approved heats are untouched. */
-export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[] } = {}): Core => {
+export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[]; minutes?: number } = {}): Core => {
     const next = markPaid(core, subId, now, opts);
     return next === core ? core : planHeats(next);
 };

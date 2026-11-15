@@ -66,74 +66,100 @@ function heatBadge(core: L.Core, h: L.Heat): { text: string; cls: string } {
 const ils = (n: number) => `₪${n.toLocaleString('he-IL')}`;
 
 /** Price line: total, or which ticket types still have no price (owner sets prices in Settings). */
-function PriceLine({ core, tickets }: { core: L.Core; tickets: string[] }) {
-    const { total, missing } = L.priceOf(core, tickets);
+function PriceLine({ core, tickets, minutes = 10 }: { core: L.Core; tickets: string[]; minutes?: number }) {
+    const { total, missing } = L.priceOf(core, tickets, minutes);
     if (tickets.length === 0) return null;
     return <div className="price-line" aria-live="polite">
         <span>סה״כ לתשלום</span><b>{total > 0 ? ils(total) : '–'}</b>
-        {missing.length > 0 && <small>אין עדיין מחיר ל: {missing.join(', ')} (מגדירים בהגדרות)</small>}
+        {missing.length > 0 && <small>אין עדיין מחיר{minutes >= 20 ? ' ל-20 דקות' : ''} ל: {missing.join(', ')} (מגדירים בהגדרות)</small>}
     </div>;
 }
 
 /** Ticket chips for one participant. Buttons only (no native select: it crashed the hosted app). */
-function TicketChips({ core, value, onChange, label }: { core: L.Core; value: string; onChange: (t: string) => void; label: string }) {
-    const p = core.settings.prices ?? {};
+function TicketChips({ core, value, onChange, label, minutes = 10 }: { core: L.Core; value: string; onChange: (t: string) => void; label: string; minutes?: number }) {
+    const p = (minutes >= 20 ? core.settings.prices20 : core.settings.prices) ?? {};
     return <div className="chips tchips" role="radiogroup" aria-label={label}>
-        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={value === t} className={`chip sm${value === t ? ' sel' : ''}${L.isFastTicket(core, t) ? ' fastc' : ''}`} onClick={() => onChange(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}{p[t] ? ` ${ils(p[t])}` : ''}{(core.settings.pairTickets ?? []).includes(t) ? ' לשניים' : ''}</button>)}
+        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={value === t} className={`chip sm${value === t ? ' sel' : ''}${L.isFastTicket(core, t) ? ' fastc' : ''}`} onClick={() => onChange(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}{p[t] ? ` ${ils(p[t])}` : ''}{isPair(core, t) ? ' לשניים' : ''}</button>)}
     </div>;
 }
 
+const isPair = (core: L.Core, t: string) => (core.settings.pairTickets ?? []).includes(t);
+
+/** 10 or 20 minutes for one registration (20 has its own price list). */
+function MinuteChips({ value, onChange }: { value: number; onChange: (m: number) => void }) {
+    return <div className="chips" role="radiogroup" aria-label="אורך המקצה">
+        {L.HEAT_MINUTE_OPTIONS.map(m => <button key={m} type="button" role="radio" aria-checked={value === m} className={`chip${value === m ? ' sel' : ''}`} onClick={() => onChange(m)}>{m} דקות</button>)}
+    </div>;
+}
+
+/** Form row: a participant, or the second seat of the two-seat kart above it (זוגי). */
+type FormRow = { name: string; ticket: string; partner?: boolean };
+
 function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
     const [group, setGroup] = useState('');
-    const [names, setNames] = useState<string[]>(['', '']);
     const def = core.settings.tickets[0] ?? '';
-    const [tix, setTix] = useState<string[]>([def, def]);
+    const blank = (): FormRow[] => [{ name: '', ticket: def }, { name: '', ticket: def }];
+    const [rows, setRows] = useState<FormRow[]>(blank);
+    const [minutes, setMinutes] = useState(10);
     const [error, setError] = useState('');
-    const [sent, setSent] = useState<{ id: string; group: string; n: number; tickets: string[] } | null>(null);
-    const setTixAt = (i: number, t: string) => setTix(tix.map((x, j) => (j === i ? t : x)));
-    const chosen = names.map((n, i) => (n.trim() ? tix[i] ?? def : null)).filter((x): x is string => x != null);
-    const setAt = (i: number, v: string) => { setError(''); setNames(names.map((x, j) => (j === i ? v : x))); };
-    const filled = names.filter(x => x.trim()).length;
+    const [sent, setSent] = useState<{ id: string; group: string; n: number; tickets: string[]; minutes: number } | null>(null);
+    // Picking זוגי adds a second name slot right under it (the second seat); picking anything else removes it.
+    const setTicketAt = (i: number, t: string) => {
+        const r = rows.slice();
+        const hadPartner = r[i + 1]?.partner;
+        r[i] = { ...r[i], ticket: t };
+        if (isPair(core, t)) { if (hadPartner) r[i + 1] = { ...r[i + 1], ticket: t }; else r.splice(i + 1, 0, { name: '', ticket: t, partner: true }); }
+        else if (hadPartner) r.splice(i + 1, 1);
+        setRows(r);
+    };
+    const removeAt = (i: number) => setRows(rows.filter((_, j) => j !== i && !(j === i + 1 && rows[j].partner)));
+    const setAt = (i: number, v: string) => { setError(''); setRows(rows.map((x, j) => (j === i ? { ...x, name: v } : x))); };
+    const names = rows.map(r => r.name);
+    const tix = rows.map(r => r.ticket);
+    const chosen = rows.filter(r => r.name.trim()).map(r => r.ticket);
+    const filled = chosen.length;
+    let num = 0;
     const submit = () => {
         let res: { id?: string; error?: string } = {};
-        update(c => { const r = L.submitForm(c, group, names, Date.now(), tix); res = r; return r.core; });
+        update(c => { const r = L.submitForm(c, group, names, Date.now(), tix, minutes); res = r; return r.core; });
         if (res.error || !res.id) { setError(res.error ?? 'שגיאה'); return; }
-        setSent({ id: res.id, group: group.trim(), n: filled, tickets: chosen }); setGroup(''); setNames(['', '']); setTix([def, def]); setError('');
+        setSent({ id: res.id, group: group.trim(), n: filled, tickets: chosen, minutes }); setGroup(''); setRows(blank()); setMinutes(10); setError('');
     };
     const sample = () => {
         const k = Math.floor(Math.random() * 20);
         setGroup(`קבוצה לדוגמה ${k + 1}`);
         const n = 3 + (k % 4);
-        setNames(Array.from({ length: n }, (_, i) => L.DEMO_NAMES[(k + i * 7) % L.DEMO_NAMES.length]));
-        setTix(Array.from({ length: n }, () => def));
+        setRows(Array.from({ length: n }, (_, i) => ({ name: L.DEMO_NAMES[(k + i * 7) % L.DEMO_NAMES.length], ticket: def })));
     };
     if (sent) return <Group label="נשלח לקופה" heading>
         <div className="sent">
             <div className="sent-num">#{sent.id.replace(/\D/g, '')}</div>
-            <p><b>{sent.group}</b> · {sent.n} משתתפים</p>
-            <PriceLine core={core} tickets={sent.tickets} />
+            <p><b>{sent.group}</b> · {sent.n} משתתפים · {sent.minutes} דקות</p>
+            <PriceLine core={core} tickets={sent.tickets} minutes={sent.minutes} />
             <p>ההרשמה מחכה בקופה. גשו לקופה לתשלום. אחרי אישור התשלום תיכנסו לתור ותוזמנו במסך המסלול.</p>
         </div>
         <Btn kind="primary" onClick={() => setSent(null)}>הרשמה חדשה</Btn>
     </Group>;
     return <Group label="הרשמה לקארטינג" heading>
-        <Callout title="דמו" tone="warning">זה טופס לדוגמה. אל תזינו שמות אמיתיים. ליד כל שם בוחרים כרטיס. ליגה ומאסטר ⚡ הן מכוניות מהירות. אין תשלום בטופס: משלמים בקופה.</Callout>
+        <Callout title="דמו" tone="warning">זה טופס לדוגמה. אל תזינו שמות אמיתיים. ליד כל שם בוחרים כרטיס. ליגה ומאסטר ⚡ הן מכוניות מהירות. בזוגי יושבים שניים ברכב אחד, אז נפתחת שורה לשם השני. אין תשלום בטופס: משלמים בקופה.</Callout>
         <div className="form">
             <label className="field"><span className="flabel">שם הקבוצה</span>
                 <input className="inp" value={group} onChange={e => { setError(''); setGroup(e.target.value); }} placeholder="למשל: החבר׳ה מהעבודה" maxLength={40} />
             </label>
+            <div className="field"><span className="flabel">אורך המקצה</span><MinuteChips value={minutes} onChange={setMinutes} /></div>
             <div className="field"><span className="flabel">שמות המשתתפים ({filled})</span>
                 <ol className="plain dlist names">
-                    {names.map((v, i) => <li key={i} className="drow trow">
-                        <span className="meta nidx">{i + 1}</span>
-                        <input className="inp dname" value={v} onChange={e => setAt(i, e.target.value)} placeholder="שם" aria-label={`משתתף ${i + 1}`} maxLength={24} />
-                        <button type="button" className="kb ghost sm" aria-label={`הסר משתתף ${i + 1}`} disabled={names.length <= 1} onClick={() => { setNames(names.filter((_, j) => j !== i)); setTix(tix.filter((_, j) => j !== i)); }}>✕</button>
-                        <TicketChips core={core} value={tix[i] ?? def} onChange={t => setTixAt(i, t)} label={`כרטיס למשתתף ${i + 1}`} />
-                    </li>)}
+                    {rows.map((r, i) => { num++; return <li key={i} className={`drow trow${r.partner ? ' partner' : ''}`}>
+                        <span className="meta nidx">{num}</span>
+                        <input className="inp dname" value={r.name} onChange={e => setAt(i, e.target.value)} placeholder={r.partner ? 'שם השני ברכב הזוגי' : 'שם'} aria-label={`משתתף ${num}`} maxLength={24} />
+                        {!r.partner && <button type="button" className="kb ghost sm" aria-label={`הסר משתתף ${num}`} disabled={rows.filter(x => !x.partner).length <= 1} onClick={() => removeAt(i)}>✕</button>}
+                        {r.partner ? <span className="meta pair-note">↑ באותו רכב זוגי</span>
+                            : <TicketChips core={core} value={r.ticket} onChange={t => setTicketAt(i, t)} label={`כרטיס למשתתף ${num}`} minutes={minutes} />}
+                    </li>; })}
                 </ol>
-                <div className="actions"><Btn small disabled={names.length >= L.MAX_FORM_NAMES} onClick={() => { setNames([...names, '']); setTix([...tix, def]); }}>+ משתתף</Btn><Btn small onClick={sample}>מלא דוגמה</Btn></div>
+                <div className="actions"><Btn small disabled={rows.length >= L.MAX_FORM_NAMES} onClick={() => setRows([...rows, { name: '', ticket: def }])}>+ משתתף</Btn><Btn small onClick={sample}>מלא דוגמה</Btn></div>
             </div>
-            <PriceLine core={core} tickets={chosen} />
+            <PriceLine core={core} tickets={chosen} minutes={minutes} />
             {error && <div className="warn" role="alert">{error}</div>}
             <Btn kind="primary" onClick={submit}>שליחה לקופה</Btn>
         </div>
@@ -147,6 +173,7 @@ function GroupTags({ core, g }: { core: L.Core; g: L.Group }) {
             ? [...new Set(g.tickets)].map(t => <span key={t} className={`gtag${L.isFastTicket(core, t) ? ' fast' : ''}`}>{t} ×{g.tickets!.filter(x => x === t).length}</span>)
             : <span className={`gtag${L.classOf(core, g) === 'fast' ? ' fast' : ''}`}>{g.ticket || 'ללא סוג'}{L.classOf(core, g) === 'fast' ? ' · מהירות' : ''}</span>)}
         {g.family && <span className="gtag fam">משפחה</span>}
+        {(g.minutes ?? 10) >= 20 && <span className="gtag">{g.minutes} דק׳</span>}
     </span>;
 }
 
@@ -155,6 +182,7 @@ function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L
     const def = core.settings.tickets[0] ?? '';
     const [tix, setTix] = useState<string[]>(() => sb.names.map((_, i) => sb.tickets?.[i] ?? def));
     const [family, setFamily] = useState(false);
+    const [minutes, setMinutes] = useState(sb.minutes ?? 10);
     const fast = tix.filter(t => L.isFastTicket(core, t)).length;
     const mixed = fast > 0 && fast < tix.length;
     return <li className="item pending">
@@ -162,13 +190,14 @@ function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L
         <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}</div>
         <ul className="plain dlist">
             {sb.names.map((n, i) => <li key={i} className="trow"><span className="tname">{n}</span>
-                <TicketChips core={core} value={tix[i]} onChange={t => setTix(tix.map((x, j) => (j === i ? t : x)))} label={`כרטיס ל${n}`} /></li>)}
+                <TicketChips core={core} value={tix[i]} onChange={t => setTix(tix.map((x, j) => (j === i ? t : x)))} label={`כרטיס ל${n}`} minutes={minutes} /></li>)}
         </ul>
         <div className="chips"><button type="button" aria-pressed={family} className={`chip${family ? ' sel' : ''}`} onClick={() => setFamily(!family)}>משפחה (מותר לערבב מהירות ורגילות)</button></div>
         {mixed && <div className={family ? 'meta' : 'warn'}>{family ? 'משפחה: ייכנסו יחד לאותו מקצה.' : `יש כאן ${fast} עם מכוניות מהירות ו-${tix.length - fast} עם רגילות. אם זו לא משפחה, הם יתפצלו לשתי קבוצות ולמקצים נפרדים.`}</div>}
-        <PriceLine core={core} tickets={tix} />
+        <MinuteChips value={minutes} onChange={setMinutes} />
+        <PriceLine core={core} tickets={tix} minutes={minutes} />
         <div className="actions">
-            <Btn kind="primary" small onClick={() => update(c => L.markPaidAndPlan(c, sb.id, Date.now(), { tickets: tix, family }))}>שולם · הכנס לתור</Btn>
+            <Btn kind="primary" small onClick={() => update(c => L.markPaidAndPlan(c, sb.id, Date.now(), { tickets: tix, family, minutes }))}>שולם · הכנס לתור</Btn>
             <Btn kind="danger" small onClick={() => update(c => L.cancelSubmission(c, sb.id))}>בטל הרשמה</Btn>
         </div>
     </li>;
@@ -607,7 +636,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
 }
 
 // ------------------------------------------------------------------ history
-function History({ hist }: { hist: L.Result[] }) {
+function History({ hist, pub }: { hist: L.Result[]; pub?: boolean }) {
     const [q, setQ] = useState('');
     const [open, setOpen] = useState<string | null>(null);
     const shown = hist.filter(r => !q.trim() || r.rows.some(x => x.label.includes(q.trim())));
@@ -615,7 +644,7 @@ function History({ hist }: { hist: L.Result[] }) {
         <label className="field"><span className="flabel">חיפוש לפי שם</span>
             <input className="inp" value={q} onChange={e => setQ(e.target.value)} placeholder="שם קבוצה או נהג" />
         </label>
-        {hist.length === 0 && <p className="empty">עוד אין מקצים שהסתיימו. הרץ מקצה בלשונית חי (או את הדמו האוטומטי).</p>}
+        {hist.length === 0 && <p className="empty">{pub ? 'עוד אין מקצים שהסתיימו היום.' : 'עוד אין מקצים שהסתיימו. הרץ מקצה בלשונית חי (או את הדמו האוטומטי).'}</p>}
         <ul className="list">
             {shown.map(r => {
                 const id = `${r.heatId}-${r.at}`;
@@ -624,13 +653,13 @@ function History({ hist }: { hist: L.Result[] }) {
                 return <li key={id} className="item">
                     <button type="button" className="hhead" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : id)}>
                         <strong>מקצה {r.heatNum}</strong>
-                        <span className="meta">{dayOf(r.at)} {timeOf(r.at)} · {r.rows.length} נהגים · {r.simulated ? 'סימולציה' : 'אמיתי'}</span>
+                        <span className="meta">{dayOf(r.at)} {timeOf(r.at)} · {r.rows.length} נהגים{r.minutes ? ` · ${r.minutes} דק׳` : ''}{pub ? '' : ` · ${r.simulated ? 'סימולציה' : 'אמיתי'}`}</span>
                         <span aria-hidden="true">{isOpen ? '▴' : '▾'}</span>
                     </button>
                     {isOpen && <ol className="board">
                         {r.rows.map(x => <li key={x.pos} className={`brow${q2 && x.label.includes(q2) ? ' hit' : ''}`}>
                             <span className="pos">{x.pos}</span><span className="kart">{x.kart}</span>
-                            <span className="who">{x.label}<small>{x.laps.length}/{r.laps} הקפות</small></span>
+                            <span className="who">{x.label}<small>{r.minutes ? `${x.laps.length} הקפות` : `${x.laps.length}/${r.laps} הקפות`}</small></span>
                             <span className="times"><b><bdi>{L.fmt(x.best)}</bdi></b><small>סה״כ <bdi>{L.fmt(x.total)}</bdi></small></span>
                         </li>)}
                     </ol>}
@@ -693,11 +722,11 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
             </div>
             <div className="field"><span className="flabel">סוגי כרטיס</span>
                 <div className="chips">{s.tickets.map(x => <button key={x} type="button" className="chip" onClick={() => s.tickets.length > 1 && upd({ tickets: s.tickets.filter(y => y !== x), fastTickets: (s.fastTickets ?? []).filter(y => y !== x) })} aria-label={`הסר ${x}`}>{x} ✕</button>)}</div>
-                <span className="flabel">מחיר לכרטיס (₪, למקצה של 10 דקות)</span>
-                <p className="meta">לפי המחירון במקום: רגיל 87, זוגי 100 (רכב דו-מושבי בליווי מבוגר, מחיר אחד לשניים), מאסטר 100. לליגה עוד אין מחיר.</p>
+                <span className="flabel">מחיר לכרטיס (₪): 10 דקות · 20 דקות</span>
+                <p className="meta">לפי המחירון: רגיל וליגה 87 ל-10 דקות ו-100 ל-20 דקות. זוגי 100 (רכב דו-מושבי, מחיר אחד לשניים), מאסטר 100. ל-20 דקות של זוגי ומאסטר עוד אין מחיר.</p>
                 <ul className="plain dlist">{s.tickets.map(x => <li key={x} className="trow"><span className="tname">{x}</span>
-                    <input key={`p-${x}-${s.prices?.[x] ?? ''}`} className="inp price-inp" type="number" inputMode="numeric" min={0} step={1} dir="ltr" placeholder="לא הוגדר" defaultValue={s.prices?.[x] ?? ''} aria-label={`מחיר ${x}`}
-                        onBlur={e => { const v = Math.max(0, Math.round(Number(e.target.value) || 0)); const next = { ...(s.prices ?? {}) }; if (v > 0) next[x] = v; else delete next[x]; upd({ prices: next }); }} /></li>)}</ul>
+                    {(['prices', 'prices20'] as const).map(k => <input key={`${k}-${x}-${s[k]?.[x] ?? ''}`} className="inp price-inp" type="number" inputMode="numeric" min={0} step={1} dir="ltr" placeholder="לא הוגדר" defaultValue={s[k]?.[x] ?? ''} aria-label={`מחיר ${x}${k === 'prices20' ? ' 20 דקות' : ''}`}
+                        onBlur={e => { const v = Math.max(0, Math.round(Number(e.target.value) || 0)); const next = { ...(s[k] ?? {}) }; if (v > 0) next[x] = v; else delete next[x]; upd({ [k]: next }); }} />)}</li>)}</ul>
                 <span className="flabel">מכוניות מהירות (לא משובצים עם רגילות, חוץ ממשפחה)</span>
                 <div className="chips">{s.tickets.map(x => { const on = L.isFastTicket(core, x); return <button key={x} type="button" aria-pressed={on} className={`chip${on ? ' sel' : ''}`} onClick={() => upd({ fastTickets: on ? (s.fastTickets ?? L.DEFAULT_FAST_TICKETS).filter(y => y !== x) : [...(s.fastTickets ?? L.DEFAULT_FAST_TICKETS), x] })}>⚡ {x}</button>; })}</div>
                 <div className="inline"><input className="inp" value={t} onChange={e => setT(e.target.value)} placeholder="סוג חדש" maxLength={24} /><Btn onClick={() => { const v = t.trim(); if (v && !s.tickets.includes(v)) { upd({ tickets: [...s.tickets, v] }); setT(''); } }}>הוסף</Btn></div>
@@ -743,10 +772,10 @@ export function App() {
     useEffect(() => {
         if (!sending) { setPubStatus(''); return; }
         const t = setTimeout(() => {
-            void Cloud.publishBoard(Cloud.boardOf(core, Date.now())).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
+            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), hist)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
         }, 300);
         return () => clearTimeout(t);
-    }, [sending, core]);
+    }, [sending, core, hist]);
 
     // Latest state for timers and chained edits: every change goes through update(fn) on the newest core.
     const coreRef = useRef(core); coreRef.current = core;
@@ -840,6 +869,7 @@ export function PublicBoard() {
     const [conn, setConn] = useState('connecting');
     const [loaded, setLoaded] = useState(false);
     const [now, setNow] = useState(() => Date.now());
+    const [showHist, setShowHist] = useState(false);
     useEffect(() => {
         const take = (p: Cloud.BoardPayload) => setBoard(p);
         void Cloud.fetchBoard().then(p => { if (p) take(p); setLoaded(true); });
@@ -850,8 +880,14 @@ export function PublicBoard() {
     const clock = now;
     if (!loaded) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
     if (!board) return <div className="dk pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><a className="pub-staff" href="?staff">כניסת צוות (קופה)</a></div>;
+    const hist = board.hist ?? [];
+    if (showHist) return <div className="dk pub-hist">
+        <div className="pub-hist-top"><Logo /><button type="button" className="kb primary" onClick={() => setShowHist(false)}>← חזרה ללוח החי</button></div>
+        <History hist={hist} pub />
+    </div>;
     return <div className="dk pub">
         <TrackScreen core={board.core} now={clock} onClose={() => {}} />
+        <button type="button" className="pub-hbtn" onClick={() => setShowHist(true)}>היסטוריית מקצים ({hist.length})</button>
         <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>
     </div>;
 }

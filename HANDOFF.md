@@ -22,6 +22,9 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 - Viewers run the race clock locally from the race start time in the board (relies on network-synced device clocks).
 - Hosting: GitHub Pages from branch gh-pages (built dist/, vite base './').
 
+- Public heat history: staff device publishes the last 30 finished heats (BoardPayload.hist); the public page has a
+  "היסטוריית מקצים" button (read-only list, search by name).
+
 ## Timed heats + manual start (owner, 2026-11-15)
 - Heat length: Settings.heatMinutes, default 10, minimum 10, chips 10/20, stepper up to 30. Fixed into live.durationMs at start.
 - When time is up each driver finishes the lap in progress, then is done (timedTiming). Board countdown = real time left.
@@ -29,14 +32,18 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 
 ## Ticket types and kart classes (owner, 2026-11-15)
 - Tickets: רגיל, זוגי, ליגה, מאסטר (יחיד renamed רגיל: on the board "ליחיד" means per person).
-- Prices from the venue board (10 min): רגיל 87, זוגי 100 per two-seat kart (pairTickets, priced per 2 people), מאסטר 100, ליגה unknown. ליגה + מאסטר = fast karts (settings.fastTickets, editable in Settings).
+- Prices (10 min): רגיל 87, ליגה 87 (owner: same as regular), זוגי 100 per two-seat kart (pairTickets, priced per 2 people), מאסטר 100.
+  20 min (settings.prices20): רגיל 100, ליגה 100 (owner: "20 דקות זה 100"); זוגי and מאסטר 20-min prices unknown.
+- Heat length per registration: form + pending item pick 10 or 20 min (Submission.minutes -> Group.minutes). 10- and 20-minute
+  groups never share a heat (fitsClass, canApprove, startBlockers); the heat runs minutesOfHeat.
+- Form: picking זוגי inserts a partner name row under it (second seat); switching away removes it. ליגה + מאסטר = fast karts (settings.fastTickets, editable in Settings).
 - Fast and regular never share a heat unless the group is marked family (Group.family): planner (fitsClass),
   approve (canApprove) and start (startBlockers) all enforce it. Old saved tickets migrate (migrateTickets).
 - Cashier picks ticket + family on each pending registration; "שולם" = markPaidAndPlan (re-suggests drafts).
 - Customer form: ticket chips next to EACH name (Submission.tickets) + running price total (settings.prices, set in
   Settings, display only). Cashier can change per-person tickets. A non-family registration with both fast and regular
   tickets is split on payment into two groups ("<name> (מהירות)"). Prices are not set by default (owner to supply).
-- Open: does "זוגי" mean a two-seat kart (2 people, 1 kart)? Today it is just a ticket name and counts per person.
+- Open: זוגי is priced per pair and has 2 name rows, but still counts as 2 places in heat capacity (not 1 kart).
 
 ## Customer form -> payment -> queue (owner flow, supersedes cashier typing every name)
 - Tab "הרשמה": the customer fills ONE group name + participant names. No other fields (no phone, email, age, price).

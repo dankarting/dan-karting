@@ -16,11 +16,13 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 });
 
 /** What the public page receives: only what the venue screen shows. Unpaid form submissions stay on the cashier device. */
-export type BoardPayload = { core: L.Core; sentAt: number };
+/** hist: finished heats (newest first) for the public history view. */
+export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[] };
 
-export function boardOf(core: L.Core, now: number): BoardPayload {
+export const PUBLIC_HISTORY = 30;
+export function boardOf(core: L.Core, now: number, hist: L.Result[] = []): BoardPayload {
     const { submissions: _unpaid, ...rest } = core;
-    return { core: { ...rest, submissions: [] }, sentAt: now };
+    return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY) };
 }
 
 export async function publishBoard(payload: BoardPayload): Promise<string | null> {
