@@ -575,12 +575,12 @@ function PublicSite({ session, on, setOn, status }: { session: Session | null; o
     return <Group label="אתר צפייה ציבורי" heading>
         <p className="meta">כל אחד יכול לפתוח את <a href={url} target="_blank" rel="noreferrer">{url}</a> ולראות בזמן אמת את מסך הקריאה ולוח הזמנים. רק מכשיר של צוות מחובר משדר אליו. רישומים שעוד לא שולמו לא נשלחים לאתר.</p>
         {!session ? <>
-            <label className="field"><span className="flabel">אימייל צוות</span><input className="inp" type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} dir="ltr" /></label>
+            <label className="field"><span className="flabel">שם משתמש</span><input className="inp" type="text" autoCapitalize="none" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} dir="ltr" /></label>
             <label className="field"><span className="flabel">סיסמה</span><input className="inp" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} dir="ltr" /></label>
             <Btn kind="primary" disabled={busy || !email.trim() || !pw} onClick={login}>{busy ? 'מתחבר…' : 'כניסת צוות'}</Btn>
             {err && <p className="err" role="alert">{err}</p>}
         </> : <>
-            <p className="meta">מחובר כ-<bdi>{session.user.email}</bdi>.</p>
+            <p className="meta">מחובר כ-<bdi>{session.user.email?.replace('@' + Cloud.STAFF_DOMAIN, '')}</bdi>.</p>
             <div className="row-actions">
                 <Btn kind={on ? 'on' : 'primary'} onClick={() => setOn(!on)}>{on ? '● משדר לאתר · עצור' : 'התחל לשדר לאתר'}</Btn>
                 <Btn kind="ghost" onClick={() => { setOn(false); void Cloud.signOut(); }}>התנתק</Btn>
@@ -651,7 +651,7 @@ export function App() {
     // Public website: staff session + "broadcast" switch (per device). Publishes the board on every change.
     const [session, setSession] = useState<Session | null>(null);
     useEffect(() => Cloud.onSession(setSession), []);
-    const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v1', false);
+    const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v1', true);
     const [pubStatus, setPubStatus] = useState('');
     const sending = ready && !!session && broadcast;
     useEffect(() => {
@@ -762,10 +762,35 @@ export function PublicBoard() {
     useEffect(() => { const i = setInterval(() => setNow(Date.now()), 200); return () => clearInterval(i); }, []);
     // The board carries the race start time, so each viewer runs the race clock locally (phone clocks are network-synced).
     const clock = now;
-    if (!loaded) return <div className="pub-wait"><Logo big /><p>טוען…</p></div>;
-    if (!board) return <div className="pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><a className="pub-staff" href="?staff">כניסת צוות (קופה)</a></div>;
-    return <div className="pub">
+    if (!loaded) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    if (!board) return <div className="dk pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><a className="pub-staff" href="?staff">כניסת צוות (קופה)</a></div>;
+    return <div className="dk pub">
         <TrackScreen core={board.core} now={clock} onClose={() => {}} />
         <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>
+    </div>;
+}
+
+// --------------------------------------------------------------- staff gate
+/** The staff area (?staff) opens only after a staff sign-in. Accounts are created by the owner in Supabase. */
+export function StaffGate({ children }: { children: React.ReactNode }) {
+    const [session, setSession] = useState<Session | null | undefined>(undefined);
+    useEffect(() => Cloud.onSession(setSession), []);
+    const [email, setEmail] = useState('');
+    const [pw, setPw] = useState('');
+    const [err, setErr] = useState('');
+    const [busy, setBusy] = useState(false);
+    if (session === undefined) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    if (session) return <>{children}</>;
+    const login = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setErr(''); const m = await Cloud.signIn(email.trim(), pw); setBusy(false); if (m) setErr('הכניסה נכשלה. בדוק שם משתמש וסיסמה.'); };
+    return <div className="dk pub-wait">
+        <Logo big />
+        <h1 className="gate-title">כניסת צוות</h1>
+        <form className="gate" onSubmit={login}>
+            <label className="field"><span className="flabel">שם משתמש</span><input className="inp" type="text" autoCapitalize="none" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} dir="ltr" required /></label>
+            <label className="field"><span className="flabel">סיסמה</span><input className="inp" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} dir="ltr" required /></label>
+            <button type="submit" className="kb primary" disabled={busy}>{busy ? 'מתחבר…' : 'כניסה'}</button>
+            {err && <p className="err" role="alert">{err}</p>}
+        </form>
+        <a className="pub-staff" href="./">למסך הצופים</a>
     </div>;
 }

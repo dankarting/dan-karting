@@ -52,8 +52,13 @@ function isPayload(x: unknown): x is BoardPayload {
     return !!p && typeof p === 'object' && !!p.core && Array.isArray(p.core.heats) && typeof p.sentAt === 'number';
 }
 
-export async function signIn(email: string, password: string): Promise<string | null> {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+/** Staff sign in with a short user name (e.g. "admin"); Supabase needs an e-mail, so a name maps to <name>@dankarting.app.
+ *  A full e-mail address is used as typed. The matching user is created by the owner in Supabase (Authentication -> Users). */
+export const STAFF_DOMAIN = 'dankarting.app';
+export const staffEmail = (user: string) => (user.includes('@') ? user : `${user}@${STAFF_DOMAIN}`).trim().toLowerCase();
+
+export async function signIn(user: string, password: string): Promise<string | null> {
+    const { error } = await supabase.auth.signInWithPassword({ email: staffEmail(user), password });
     return error ? error.message : null;
 }
 

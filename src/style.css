@@ -347,3 +347,6 @@ body { background: #0b0b0c; }
 .onair-tag { color: #ff4d4d; }
 .err { color: #ff6b6b; font-size: 14px; }
 .pub-staff { color: #777; font-size: 13px; margin-top: 24px; }
+.pub, .pub-wait { padding: 0; }
+.gate-title { font-size: 24px; margin: 0; }
+.gate { display: grid; gap: 12px; width: min(340px, 100%); text-align: start; }

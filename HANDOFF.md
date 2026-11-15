@@ -11,7 +11,8 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 
 ## Public timing website (added 2026-11-15, owner chose a real public site)
 - Root URL = read-only public board (PublicBoard in App.tsx): call-up screen and live timing, no login.
-  Staff app = same URL with `?staff`.
+  Staff app = same URL with `?staff`, behind a staff sign-in gate (StaffGate). Login takes a user name;
+  `admin` maps to admin@dankarting.app (Cloud.staffEmail). The owner creates staff users in Supabase Auth.
 - Backend: Supabase project fqytpdapnvbpfonatopt, table public.live_board (row id 'main', data jsonb).
   RLS: anyone can SELECT; only `authenticated` can UPDATE. Sign-ups must stay DISABLED in Supabase Auth so only
   staff accounts the owner creates can sign in. Realtime publication includes the table. Setup SQL: docs/supabase-setup.sql.
