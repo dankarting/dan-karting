@@ -763,7 +763,7 @@ export function PublicBoard() {
     // The board carries the race start time, so each viewer runs the race clock locally (phone clocks are network-synced).
     const clock = now;
     if (!loaded) return <div className="pub-wait"><Logo big /><p>טוען…</p></div>;
-    if (!board) return <div className="pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p></div>;
+    if (!board) return <div className="pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><a className="pub-staff" href="?staff">כניסת צוות (קופה)</a></div>;
     return <div className="pub">
         <TrackScreen core={board.core} now={clock} onClose={() => {}} />
         <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>
