@@ -1,0 +1,66 @@
+# Dan Karting demo - handoff (separate from Helper project)
+
+Hebrew RTL, phone-first React app. Synthetic data only. No real venue integration, no customer data, no prices, no payments, no safety/age/height rules, no vehicle controls, no spoken announcements, no Vmax parity claims.
+
+## Source
+- src/logic.ts - pure logic: groups, planHeats, manual heats, cashier overrides on queued heats, driver names/karts, queue + call-up, live run (start/speed/finish/cancel), simulated TimingFeed, history.
+- tests/logic.test.ts - `npx tsx tests/logic.test.ts` (counted harness, 16 cases, exits 1 on failure).
+- src/App.tsx - tabs: form (customer signup), cashier (pending payment + paid groups), heats, live (track and queue), history, settings. TrackScreen (switches by itself between race, call, next and empty), WallDisplay, CallDisplay, DriverEditor.
+- src/style.css - dark carbon theme with red/yellow accents; maps host --ds-* tokens to the dark palette.
+- shim/instinct-files.tsx + vite.config.ts + tsconfig.json + index.html + package.json - standalone run only.
+
+## Public timing website (added 2026-11-15, owner chose a real public site)
+- Root URL = read-only public board (PublicBoard in App.tsx): call-up screen and live timing, no login.
+  Staff app = same URL with `?staff`.
+- Backend: Supabase project fqytpdapnvbpfonatopt, table public.live_board (row id 'main', data jsonb).
+  RLS: anyone can SELECT; only `authenticated` can UPDATE. Sign-ups must stay DISABLED in Supabase Auth so only
+  staff accounts the owner creates can sign in. Realtime publication includes the table. Setup SQL: docs/supabase-setup.sql.
+- src/cloud.ts: client (publishable key, public by design), publishBoard / fetchBoard / subscribeBoard / signIn.
+- Staff device: Settings -> "אתר צפייה ציבורי" -> staff sign-in -> "התחל לשדר לאתר". Every core change is pushed
+  (debounced 300 ms). Unpaid form submissions are stripped before sending (boardOf).
+- Viewers run the race clock locally from the race start time in the board (relies on network-synced device clocks).
+- Hosting: GitHub Pages from branch gh-pages (built dist/, vite base './').
+
+## Customer form -> payment -> queue (owner flow, supersedes cashier typing every name)
+- Tab "הרשמה": the customer fills ONE group name + participant names. No other fields (no phone, email, age, price).
+- The submission waits at the cashier under "ממתינים לתשלום". It is NOT in the queue and cannot be planned.
+- Cashier presses "שולם · הכנס לתור" (SIMULATED staff confirmation: no payment processing) -> it becomes a group
+  waiting for a heat, carrying the form names. Or "בטל הרשמה".
+- After that the cashier keeps full control of heat composition as before. Driver labels come from the form names
+  (continued across heats when a group is split); a name the cashier edits in "שמות וקארטים" wins.
+- The old manual add (group by count, no names) is still there, collapsed: "הוספה ידנית בקופה (בלי טופס)".
+- Logic: submitForm / markPaid / cancelSubmission / pendingOf in src/logic.ts; core.submissions; Group.names.
+- Open: in production the form would run on customers' phones or a kiosk, which needs a shared backend (today
+  everything is on one device). Whether the venue wants the cashier to pick ticket type / keep-together at payment is open
+  (defaults: first ticket type, keep together).
+
+## Owner vision
+- Venue screen shows the called / next heat as a lineup board: driver "photo" cards with names and kart numbers.
+  Photos are PLACEHOLDERS (an original helmet illustration per kart colour); no camera, no face recognition, no photo collection.
+- Then it switches by itself to a red/dark live timing board: position (+ places gained vs grid), kart, name,
+  S1/S2/S3, last lap, best lap, gap, laps, estimated time remaining, status lights / chequered flag.
+  Purple = fastest in the heat, green = personal best. Original design; no vendor code or assets.
+- Live tab: "הדגמה מלאה בלחיצה" loads demo groups, plans, fills synthetic names, approves, and starts the auto demo.
+  "מלא שמות דמו" fills invented names only where none were entered. The cashier still controls everything.
+- Sectors and timing are simulated. See docs/TIMING-INTEGRATION.md for the decoder seam (AMBrc2 over RS-232/USB reported, protocol not assumed).
+
+## Flow (one coherent demo)
+Cashier adds groups -> heats are suggested or built by hand -> cashier approves -> the approved heats form a simple queue (heat-number order, no time slots) -> a heat is called (screen shows "called") -> it starts (the race board takes over the screen; it leaves the queue) -> it finishes (clock freezes, results stay on screen, the next heat can already be called) -> it is saved to history (heat done) -> the called heat starts next.
+- The auto demo (Live tab) runs this loop by itself. Its timers (DEMO in App.tsx: call 2.5 s, start 6 s, results 7 s, speed x20) are illustrative only.
+- The live run is stored in core (`core.live`). The race and the auto demo keep running when you switch tabs or close the screen, and the race survives a reload. The auto demo flag itself is per session.
+- Cashier override at any point until the heat goes on track: add, remove or move groups in draft AND approved/called heats (Heats tab). An approved heat that becomes invalid (empty, over capacity, kart clash, or missing karts in cashier mode) drops back to draft and leaves the queue, with a notice. Driver names and karts move with a moved group. The heat on track is locked.
+- Any queued heat can be called, not only the first. Only one heat is called at a time, and only one is on track.
+- startBlockers(): kart clash, over capacity (e.g. after capacity was lowered), empty, or another heat on track. Blocked heats cannot start; the auto demo waits and says why.
+
+## Open decisions (do not settle silently)
+- Capacity 10 vs 14: Settings offers both (10 is the default), plus a free stepper.
+- Kart assignment: kartMode unset | cashier | staff. Cashier mode needs every kart chosen before approval. Staff mode shows "staff will assign" on the call screen until a kart is set, but does not block start (the simulation uses the suggested number). Still undecided: does the cashier assign karts by parking order or pick a kart for each name? No telemetry detection of parked karts.
+- The real call-up trigger is not decided. Demo timers are illustrative only. Screen only, no spoken announcements.
+- Timing is simulated. Seam: Passing[] -> lapsFromPassings() -> TimingFeed (see docs/TIMING-INTEGRATION.md). Decoder protocol, bridge, clock, transponder mapping and sector loops are open.
+- Persistence: device-local only (useLocalState) for the cashier data. Only the board is shared, one way, via Supabase (see Public timing website). The track screen is an overlay on the same device.
+- Queue order follows heat numbers. There is no drag-reorder; the cashier can call any queued heat out of order instead.
+- Official logo: not bundled or hot-linked (no external calls). A text wordmark stands in until a local copy is placed and LOGO_SRC is set.
+
+## Known gotchas
+- Avoid dynamic native <select>: it crashed the hosted app (DOM removeChild). Only buttons and chips are used.
+- '@instinct/files' API is mirrored by the shim from usage only. Check it against the real package on delivery.
