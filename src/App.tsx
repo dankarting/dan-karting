@@ -882,40 +882,65 @@ export function PublicBoard() {
     // The board carries the race start time, so each viewer runs the race clock locally (phone clocks are network-synced).
     const clock = now;
     if (!loaded) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
-    if (!board) return <div className="dk pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><a className="pub-staff" href="?staff">כניסת צוות (קופה)</a></div>;
+    if (!board) return <div className="dk pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><StaffShield /></div>;
     const hist = board.hist ?? [];
     if (showHist) return <div className="dk pub-hist">
         <div className="pub-hist-top"><Logo /><button type="button" className="kb primary" onClick={() => setShowHist(false)}>← חזרה ללוח החי</button></div>
         <History hist={hist} pub />
+        <StaffShield />
     </div>;
     return <div className="dk pub">
         <TrackScreen core={board.core} now={clock} onClose={() => {}} />
+        <StaffShield />
         <button type="button" className="pub-hbtn" onClick={() => setShowHist(true)}>היסטוריית מקצים ({hist.length})</button>
         <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>
     </div>;
 }
 
+/** Small shield in the corner of the public site: staff sign in here and go to the staff area. */
+function StaffShield() {
+    const [open, setOpen] = useState(false);
+    const go = () => { location.href = '?staff'; };
+    const click = async () => { const { data } = await Cloud.supabase.auth.getSession(); if (data.session) go(); else setOpen(true); };
+    return <>
+        <button type="button" className="pub-shield" aria-label="כניסת צוות" title="כניסת צוות" onClick={() => void click()}>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Zm0 2.2 6 2.2V11c0 4-2.6 7.8-6 8.9-3.4-1.1-6-4.9-6-8.9V6.4l6-2.2Zm0 3.3a2.5 2.5 0 0 0-1 4.8V15h2v-2.7a2.5 2.5 0 0 0-1-4.8Z" /></svg>
+        </button>
+        {open && <div className="pub-modal" role="dialog" aria-modal="true" aria-label="כניסת צוות" onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}>
+            <div className="pub-modal-box">
+                <div className="pub-modal-top"><h2 className="gate-title">כניסת צוות</h2><button type="button" className="kb ghost sm" aria-label="סגור" onClick={() => setOpen(false)}>✕</button></div>
+                <StaffLoginForm onDone={go} />
+            </div>
+        </div>}
+    </>;
+}
+
 // --------------------------------------------------------------- staff gate
 /** The staff area (?staff) opens only after a staff sign-in. Accounts are created by the owner in Supabase. */
-export function StaffGate({ children }: { children: React.ReactNode }) {
-    const [session, setSession] = useState<Session | null | undefined>(undefined);
-    useEffect(() => Cloud.onSession(setSession), []);
+/** User name + password form for staff. onDone runs after a successful sign-in. */
+function StaffLoginForm({ onDone }: { onDone?: () => void }) {
     const [email, setEmail] = useState('');
     const [pw, setPw] = useState('');
     const [err, setErr] = useState('');
     const [busy, setBusy] = useState(false);
-    if (session === undefined) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
-    if (session) return <>{children}</>;
-    const login = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setErr(''); const m = await Cloud.signIn(email.trim(), pw); setBusy(false); if (m) setErr('הכניסה נכשלה. בדוק שם משתמש וסיסמה.'); };
-    return <div className="dk pub-wait">
-        <Logo big />
-        <h1 className="gate-title">כניסת צוות</h1>
-        <form className="gate" onSubmit={login}>
+    const login = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setErr(''); const m = await Cloud.signIn(email.trim(), pw); setBusy(false); if (m) setErr('הכניסה נכשלה. בדוק שם משתמש וסיסמה.'); else onDone?.(); };
+    return <form className="gate" onSubmit={login}>
             <label className="field"><span className="flabel">שם משתמש</span><input className="inp" type="text" autoCapitalize="none" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} dir="ltr" required /></label>
             <label className="field"><span className="flabel">סיסמה</span><input className="inp" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} dir="ltr" required /></label>
             <button type="submit" className="kb primary" disabled={busy}>{busy ? 'מתחבר…' : 'כניסה'}</button>
             {err && <p className="err" role="alert">{err}</p>}
-        </form>
+        </form>;
+}
+
+export function StaffGate({ children }: { children: React.ReactNode }) {
+    const [session, setSession] = useState<Session | null | undefined>(undefined);
+    useEffect(() => Cloud.onSession(setSession), []);
+    if (session === undefined) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    if (session) return <>{children}</>;
+    return <div className="dk pub-wait">
+        <Logo big />
+        <h1 className="gate-title">כניסת צוות</h1>
+        <StaffLoginForm />
         <a className="pub-staff" href="./">למסך הצופים</a>
     </div>;
 }
