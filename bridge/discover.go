@@ -27,6 +27,7 @@ type conn struct {
 	src   io.ReadCloser
 	desc  string
 	first []byte
+	kind  string // "rentix" or "decoder"
 }
 
 func openTCP(host string, port int) (net.Conn, error) {
@@ -69,8 +70,52 @@ func probe(r io.Reader, d time.Duration) ([]byte, bool) {
 	return got, false
 }
 
-// connect returns a working decoder connection, searching for one if needed.
+// connect finds the timing source. RentiX first (it keeps the decoder; we only read its scoreboard feed),
+// then the AMB decoder directly (only when no RentiX is running).
 func connect(cfg *Config) (*conn, error) {
+	var rerr error
+	if cfg.Source != "decoder" {
+		c, err := connectRentix(cfg)
+		if err == nil {
+			c.kind = "rentix"
+			return c, nil
+		}
+		rerr = err
+		if cfg.Source == "rentix" {
+			return nil, err
+		}
+	}
+	c, err := connectDecoder(cfg)
+	if err == nil {
+		c.kind = "decoder"
+		return c, nil
+	}
+	if rerr != nil {
+		return nil, fmt.Errorf("%v; %v", rerr, err)
+	}
+	return nil, err
+}
+
+// connectRentix opens RentiX's live scoreboard feed (RMonitor, read-only): the saved/default address, else a search.
+func connectRentix(cfg *Config) (*conn, error) {
+	if c, err := openTCP(cfg.RentixHost, cfg.RentixPort); err == nil {
+		return &conn{src: c, desc: fmt.Sprintf("RentiX %s:%d", cfg.RentixHost, cfg.RentixPort)}, nil
+	}
+	for _, a := range scanLAN([]int{cfg.RentixPort}, false) {
+		c, err := openTCP(a.host, a.port)
+		if err != nil {
+			continue
+		}
+		cfg.RentixHost = a.host
+		saveConfig(*cfg)
+		fmt.Printf("OK  found RentiX at %s:%d (saved)\n", a.host, a.port)
+		return &conn{src: c, desc: fmt.Sprintf("RentiX %s:%d", a.host, a.port)}, nil
+	}
+	return nil, fmt.Errorf("RentiX not found (%s:%d)", cfg.RentixHost, cfg.RentixPort)
+}
+
+// connectDecoder returns a working decoder connection, searching for one if needed.
+func connectDecoder(cfg *Config) (*conn, error) {
 	// 1. saved / configured connection
 	if cfg.Connection == "tcp" || cfg.DecoderHost != "" {
 		c, err := openTCP(cfg.DecoderHost, cfg.DecoderPort)
@@ -154,7 +199,7 @@ type addr struct {
 	port int
 }
 
-// scanLAN looks for open decoder ports on this laptop's local networks.
+// scanLAN looks for open RentiX / decoder ports on this laptop's local networks.
 func scanLAN(ports []int, verbose bool) []addr {
 	var out []addr
 	var mu sync.Mutex
@@ -200,7 +245,7 @@ func scanLAN(ports []int, verbose bool) []addr {
 const startupName = "DanKarting-bridge.cmd"
 
 func startupCmd() string {
-	return fmt.Sprintf("@echo off\r\ntitle Dan Karting - decoder bridge\r\ncd /d \"%s\"\r\n\"%s\" run\r\npause\r\n", exeDir(), filepath.Join(exeDir(), filepath.Base(os.Args[0])))
+	return fmt.Sprintf("@echo off\r\ntitle Dan Karting - timing bridge\r\ncd /d \"%s\"\r\n\"%s\" run\r\npause\r\n", exeDir(), filepath.Join(exeDir(), filepath.Base(os.Args[0])))
 }
 
 func startupDirs() (startup, desktop string) {
@@ -232,7 +277,7 @@ func install(cfg Config) {
 		}
 	}
 	fmt.Println("OK  installed: the bridge now starts by itself when this laptop starts (and from the desktop icon).")
-	run(cfg, true)
+	run(cfg, false)
 }
 
 func uninstall() {

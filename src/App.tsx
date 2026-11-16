@@ -2,6 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Callout, Closing, CopyButton, FileCard, Group, Header, useLocalState } from '@instinct/files';
 import * as L from './logic';
 import * as Cloud from './cloud';
+import * as R from './rentix';
+import { useShared, type SyncStatus } from './shared';
+
+/** Data saved by the older per-device version, used once as the starting point. */
+function legacy<T>(k: string): T | null { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) as T : null; } catch { return null; } }
 import type { Session } from '@supabase/supabase-js';
 
 type Tab = 'form' | 'cashier' | 'heats' | 'live' | 'history' | 'settings';
@@ -461,10 +466,10 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
     return <span className={`tb-lights ${state}`} aria-label={state === 'live' ? 'מקצה פעיל' : 'ממתין'}>{[0, 1, 2, 3].map(i => <i key={i} />)}</span>;
 }
 
-function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean }) {
+function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string }) {
     useEscape(p.onClose);
     const dense = p.rows.length > 10;
-    return <div className={`wall tboard${p.real ? ' nosec' : ''}`} role="dialog" aria-label="לוח זמנים">
+    return <div className="wall tboard" role="dialog" aria-label="לוח זמנים">
         <header className="tb-head">
             <Logo big />
             <Lights state={p.state} />
@@ -475,7 +480,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
             </div>
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
         </header>
-        {p.real ? <div className="wall-sim real">זמנים אמיתיים מהדקודר</div> : <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>}
+        {p.real ? <div className="wall-sim real">זמנים מהמסלול · {p.srcName ?? 'RentiX'}</div> : <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>}
         <ol className={`tb-rows${dense ? ' dense' : ''}`}>
             <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>S1</span><span>S2</span><span>S3</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
             {p.rows.map(r => <li key={r.key} className={`tb-row${r.pos === 1 ? ' lead' : ''}`}>
@@ -535,8 +540,7 @@ function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
     const bestAll = Math.min(...timing.map(t => t.best ?? Infinity));
     // simulated sectors of every completed lap: overall best (purple) and personal best (green) per sector
     const secs = new Map<string, [number, number, number][]>();
-    // real decoder timing has one loop (start/finish) only: no sectors
-    if (core.live.source !== 'decoder') timing.forEach(t => { const idx = drivers.findIndex(d => d.key === t.key); secs.set(t.key, t.laps.map((ms, n) => L.sectorsOf(ms, seed, idx, n))); });
+    timing.forEach(t => { const idx = drivers.findIndex(d => d.key === t.key); secs.set(t.key, t.laps.map((ms, n) => L.sectorsOf(ms, seed, idx, n))); });
     const overall = [0, 1, 2].map(i => Math.min(...[...secs.values()].flat().map(x => x[i]), Infinity));
     return ranked.map((t, i) => {
         const d = drivers.find(x => x.key === t.key)!;
@@ -557,7 +561,40 @@ function resultRowsOf(r: L.Result): BoardRow[] {
 const mmss = (ms: number) => { const s = Math.ceil(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 
 /** The venue screen: switches by itself between lineup (call / next / empty) and live timing. */
-export function TrackScreen({ core, now, onClose }: { core: L.Core; now: number; onClose: () => void }) {
+/** Live board from RentiX (real track timing, read-only). */
+function ExtWall({ ext, onClose }: { ext: R.ExtBoard; onClose: () => void }) {
+    const lead = ext.rows[0];
+    const bAll = Math.min(...ext.rows.map(r => r.best ?? Infinity));
+    const done = /finish|checker/i.test(ext.flag);
+    const rows: BoardRow[] = ext.rows.map((r, i) => ({ key: `${r.kart}-${i}`, pos: r.pos, kart: r.kart, label: r.name, laps: r.laps, best: r.best, last: r.last,
+        gap: i === 0 ? '' : r.laps < lead.laps ? `-${lead.laps - r.laps} הקפות` : r.total != null && lead.total != null ? `+${L.fmt(r.total - lead.total)}` : '',
+        finished: done, isBest: r.best != null && r.best === bAll, sectors: null, gained: null }));
+    return <WallDisplay title={ext.run || 'מקצה'} sub={done ? 'הסתיים · תוצאות' : `על המסלול · זמנים מהמסלול${ext.flag ? ` · ${ext.flag}` : ''}`} totalLaps={0} state={done ? 'done' : 'live'}
+        clock={ext.raceTime != null ? L.fmt(ext.raceTime) : undefined} countdown={ext.timeToGo ? mmss(ext.timeToGo) : undefined} rows={rows} onClose={onClose} real srcName={R.sourceName(ext.src)} />;
+}
+
+/** Polls the timing bridge on this computer (dk-bridge, or the older rentix-bridge.ps1). Not running = no live data.
+ *  source: RentiX's feed, or the AMB decoder read directly. */
+type RxState = { up: boolean; connected: boolean; error: string; ext: R.ExtBoard | null; source?: R.ExtSource };
+function useRentix(): RxState {
+    const [st, setSt] = useState<RxState>({ up: false, connected: false, error: '', ext: null });
+    useEffect(() => {
+        let stop = false; let timer: ReturnType<typeof setTimeout>;
+        const tick = async () => {
+            const b = await R.readBridge();
+            if (stop) return;
+            setSt(b ? { up: true, connected: b.connected, error: b.error, source: b.source, ext: R.parseRMonitor(b.lines, Date.now(), b.source) } : { up: false, connected: false, error: '', ext: null });
+            timer = setTimeout(tick, b ? 1000 : 5000);
+        };
+        void tick();
+        return () => { stop = true; clearTimeout(timer); };
+    }, []);
+    return st;
+}
+
+export function TrackScreen({ core, now, onClose, ext }: { core: L.Core; now: number; onClose: () => void; ext?: R.ExtBoard | null }) {
+    // real timing from RentiX wins over the simulation while it has a heat
+    if (R.extActive(ext)) return <ExtWall ext={ext} onClose={onClose} />;
     const sc = L.screenState(core);
     if (sc.state === 'race' && sc.heat) {
         const timing = L.liveTiming(core, now);
@@ -568,7 +605,7 @@ export function TrackScreen({ core, now, onClose }: { core: L.Core; now: number;
         const timed = left != null;
         const sub = done ? 'הסתיים · תוצאות' : timed && left === 0 ? 'הזמן נגמר · הקפה אחרונה' : 'על המסלול · בלייב';
         return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={timed ? `${sub} · ${Math.round(core.live!.durationMs! / 60_000)} דק׳` : sub} totalLaps={timed ? 0 : core.settings.laps} state={done ? 'done' : 'live'}
-            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose} real={core.live?.source === 'decoder'}
+            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose}
             footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} />;
     }
     return <CallDisplay core={core} state={sc.state === 'race' ? 'empty' : sc.state} heat={sc.heat} onClose={onClose} />;
@@ -591,10 +628,11 @@ function HeatMinutes({ core, update }: { core: L.Core; update: Update }) {
 type LiveProps = {
     core: L.Core; update: Update; now: number; hist: L.Result[];
     auto: boolean; setAuto: (b: boolean) => void; openScreen: (s: 'track' | 'last') => void;
-    save: () => void; start: (id: string) => void; cancel: () => void; goHeats: () => void;
+    save: () => void; start: (id: string) => void; cancel: () => void; goHeats: () => void; rx: RxState;
 };
 
-function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start, cancel, goHeats }: LiveProps) {
+function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start, cancel, goHeats, rx }: LiveProps) {
+    const ext = R.extActive(rx.ext) ? rx.ext : null;
     const [editId, setEditId] = useState<string | null>(null);
     const heat = L.runningHeat(core);
     const timing = L.liveTiming(core, now);
@@ -605,20 +643,18 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
     const calledH = L.calledHeat(core);
     const lastRes = hist[0];
     const nextUp = calledH ?? qList[0];
-    const real = heat ? core.live?.source === 'decoder' : L.timingSourceOf(core) === 'decoder';
-    const unknownTx = L.unknownOnTrack(core);
-    const watch = heat ?? nextUp;
-    const unmapped = real && watch ? [...new Set(L.driversOf(core, watch).map(d => d.kart).filter(k => !core.settings.transponders?.[String(k)]))] : [];
     const autoNext = !auto ? '' : heat ? (done ? 'הדמו: מציג תוצאות, קורא למקצה הבא ושומר לבד.' : 'הדמו: המקצה על המסלול. כשהזמן ייגמר והנהגים יסיימו את ההקפה, התוצאות יוצגו וישמרו לבד.')
         : calledH ? (L.startBlockers(core, calledH).length ? `הדמו ממתין: מקצה ${calledH.num} לא יכול לעלות (${L.startBlockers(core, calledH).join(', ')}).` : `הדמו: מקצה ${calledH.num} נקרא. לחץ "התחל מקצה" כשהנהגים מוכנים.`)
             : qList[0] ? `הדמו: יקרא למקצה ${qList[0].num} עוד רגע.` : 'הדמו ממתין: אין מקצה מאושר בתור. אשר מקצה בלשונית מקצים.';
 
     return <Group label="מסלול ותור" heading>
-        {real
-            ? <Callout title="זמנים אמיתיים מהדקודר" tone="note">ההקפות מגיעות מהדקודר AMB דרך תוכנת הגשר במחשב של המסלול, ונספרות מהלחיצה על "התחל מקצה".</Callout>
-            : <Callout title="סימולציה, לא שעון אמיתי" tone="warning">הזמנים מומצאים על ידי האפליקציה כדי להדגים את המסך. אפשר לחבר את הדקודר בהגדרות ← שעון הקפות. התזמונים של הדמו האוטומטי להמחשה בלבד.</Callout>}
-        {unmapped.length > 0 && <p className="warn">אין טרנספונדר לקארט {unmapped.join(', ')}: ההקפות שלו לא ייספרו. שייך בהגדרות ← שעון הקפות.</p>}
-        {unknownTx.length > 0 && <p className="warn">עובר בקו טרנספונדר שלא שייך לאף נהג במקצה: {unknownTx.join(', ')}. שייך אותו לקארט בהגדרות ← שעון הקפות.</p>}
+        {ext && <div className="rx-card" aria-label={`זמנים מהמסלול (${R.sourceName(ext.src)})`}>
+            <div className="itop"><strong>{ext.run || 'מקצה'} · זמנים מהמסלול</strong><span className="badge rx">{R.sourceName(ext.src)} · אמיתי</span></div>
+            <p className="meta">{ext.raceTime != null ? `זמן ${L.fmt(ext.raceTime)}` : ''}{ext.timeToGo ? ` · נותר ${mmss(ext.timeToGo)}` : ''}{ext.flag ? ` · ${ext.flag}` : ''}. {ext.src === 'decoder' ? 'נקרא ישירות מהדקודר: מקצה חדש מתחיל במעבר הראשון אחרי דקה בלי מעברים בקו.' : 'המקצה מנוהל ב-RentiX; כאן רק מוצג ונשלח למסך הלקוחות.'}</p>
+            {R.unmappedTx(ext, core.settings.transponders).length > 0 && <p className="warn">טרנספונדרים בלי קארט: {R.unmappedTx(ext, core.settings.transponders).join(', ')}. שייך בהגדרות ← שעון הקפות.</p>}
+            <ol className="board">{ext.rows.map(r => <li key={`${r.kart}-${r.pos}`} className="brow"><span className="pos">{r.pos}</span><span className="kart">{r.kart}</span><span className="who">{r.name}<small>{r.laps} הקפות</small></span><span className="times"><b><bdi>{L.fmt(r.best)}</bdi></b><small>אחרונה <bdi>{L.fmt(r.last)}</bdi></small></span></li>)}</ol>
+        </div>}
+        <Callout title="סימולציה, לא שעון אמיתי" tone="warning">הזמנים מומצאים על ידי האפליקציה כדי להדגים את המסך. אין חיבור לשעון ההקפות או למסכים של המסלול. התזמונים של הדמו האוטומטי להמחשה בלבד.</Callout>
 
         <div className="row-actions">
             <Btn kind={auto ? 'on' : 'ghost'} onClick={() => { const on = !auto; setAuto(on); if (on) openScreen('track'); }}>{auto ? '■ עצור דמו אוטומטי' : '▶ הפעל דמו אוטומטי'}</Btn>
@@ -635,9 +671,9 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
                     ? <span className="clock" aria-label="זמן שנותר">נותר {mmss(L.timeLeft(core.live, now)!)}</span>
                     : <span className="clock" aria-label="זמן שעבר">{L.fmt(Math.min(L.raceClock(timing, elapsed), 3_600_000))}</span>}
             </div>
-            {!real && <div className="chips" role="radiogroup" aria-label="מהירות סימולציה">
+            <div className="chips" role="radiogroup" aria-label="מהירות סימולציה">
                 {SPEEDS.map(s => <button key={s} type="button" role="radio" aria-checked={core.live?.speed === s} className={`chip${core.live?.speed === s ? ' sel' : ''}`} onClick={() => update(c => L.setSpeed(c, s, Date.now()))}>x{s}</button>)}
-            </div>}
+            </div>
             <ol className="board">
                 {rows.map(r => <li key={r.key} className="brow">
                     <span className="pos">{r.pos}</span>
@@ -768,7 +804,40 @@ function PublicSite({ session, on, setOn, status }: { session: Session | null; o
     </Group>;
 }
 
-function Settings({ core, update, hist, onReset, site, timing }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site: React.ReactNode; timing?: React.ReactNode }) {
+/** Live timing from the track: bridge state + kart -> transponder map (needed when the bridge reads the decoder directly). */
+function TimingSettings({ core, update, rx }: { core: L.Core; update: Update; rx?: RxState }) {
+    const map = core.settings.transponders ?? {};
+    const maxKart = Math.max(core.settings.capacity, ...Object.keys(map).map(Number).filter(n => n > 0), 0);
+    const [extra, setExtra] = useState(0);
+    const [assign, setAssign] = useState<Record<string, string>>({});
+    const karts = Array.from({ length: Math.min(99, maxKart + extra) }, (_, i) => i + 1);
+    const unmapped = R.unmappedTx(rx?.ext, map);
+    return <Group label="שעון הקפות" heading>
+        <p className={rx?.up && rx.connected ? 'tx-ok' : 'tx-bad'}>
+            {!rx?.up ? '✗ תוכנת הגשר (dk-bridge) לא רצה במחשב הזה. הפעל אותה פעם אחת עם install.cmd (הוראות: docs/BRIDGE-HE.md).'
+                : rx.connected ? `✓ מחובר ל${R.sourceName(rx.source)}. הזמנים מוצגים בלשונית חי, במסך המסלול ובאתר.`
+                    : `✗ הגשר רץ אבל אין חיבור ל-RentiX או לדקודר${rx.error ? `: ${rx.error}` : ''}.`}
+        </p>
+        <p className="meta">הגשר קורא קודם את RentiX (בלי לשנות בו כלום). רק אם RentiX לא רץ, הוא קורא את הדקודר ישירות. בקריאה ישירה מהדקודר צריך לשייך כל טרנספונדר לקארט (למטה).</p>
+        {unmapped.length > 0 && <div className="field"><span className="flabel">טרנספונדרים על המסלול בלי קארט</span>
+            <ul className="tx-recent">{unmapped.map(tx => <li key={tx}><bdi dir="ltr">{tx}</bdi><span className="tx-bad">לא משויך</span>
+                <span className="inline"><input className="inp" type="number" inputMode="numeric" min={1} max={99} placeholder="קארט" aria-label={`קארט לטרנספונדר ${tx}`} value={assign[tx] ?? ''} onChange={e => setAssign(a => ({ ...a, [tx]: e.target.value }))} />
+                    <Btn small onClick={() => { const n = Number(assign[tx]); if (n >= 1) update(c => L.setTransponder(c, n, tx)); }}>שייך</Btn></span></li>)}</ul>
+        </div>}
+        <div className="field"><span className="flabel">קארט ← מספר טרנספונדר</span>
+            <div className="tx-table">
+                {karts.map(k => <label key={k} className="tx-cell"><span className="kart">{k}</span>
+                    <input key={`${k}-${map[String(k)] ?? ''}`} className="inp" inputMode="numeric" placeholder="—" aria-label={`טרנספונדר של קארט ${k}`} defaultValue={map[String(k)] ?? ''} maxLength={12}
+                        onBlur={e => { const v = e.target.value.trim(); if (v !== (map[String(k)] ?? '')) update(c => L.setTransponder(c, k, v)); }}
+                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /></label>)}
+            </div>
+            <Btn small onClick={() => setExtra(x => x + 5)}>עוד קארטים</Btn>
+            <p className="meta">המספר שמודפס על הטרנספונדר שמחובר לקארט. עם RentiX לא צריך: מספרי הקארטים מגיעים ממנו.</p>
+        </div>
+    </Group>;
+}
+
+function Settings({ core, update, hist, onReset, site, rx }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site: React.ReactNode; rx?: RxState }) {
     const s = core.settings;
     const [t, setT] = useState('');
     const [confirm, setConfirm] = useState(false);
@@ -777,7 +846,7 @@ function Settings({ core, update, hist, onReset, site, timing }: { core: L.Core;
     const overQueued = core.heats.filter(h => h.status === 'approved' && L.heatCount(h) > s.capacity).length;
     return <>
         {site}
-        {timing}
+        <TimingSettings core={core} update={update} rx={rx} />
         <Group label="הגדרות" heading>
             <div className="field"><span className="flabel">קיבולת מקצה (קארטים)</span>
                 <div className="chips" role="radiogroup" aria-label="קיבולת">
@@ -810,7 +879,7 @@ function Settings({ core, update, hist, onReset, site, timing }: { core: L.Core;
             <Callout title="נתוני דמה בלבד" tone="warning">אין חיבור לשרת, לקופה, למסכים או לשעון ההקפות של העסק. אין תשלומים ואין נתוני לקוחות. אל תקליד כאן פרטים אישיים של לקוחות.</Callout>
             <ul className="plain">
                 <li><b>שמירה:</b> במכשיר ובדפדפן הזה בלבד. טלפון אחד לא רואה את מה שהוזן במחשב. מערכת משותפת לכמה מכשירים ומסכים דורשת שרת, והיא שלב הבא.</li>
-                <li><b>זמנים:</b> {L.timingSourceOf(core) === 'decoder' ? 'מהדקודר AMB של המסלול, דרך תוכנת הגשר (dk-bridge) במחשב הנייד. מקטעים S1/S2/S3 לא מוצגים: יש לולאת זמן אחת בקו.' : 'מדומים. אפשר לחבר את הדקודר האמיתי ב"שעון הקפות" למעלה.'}</li>
+                <li><b>זמנים:</b> מדומים. הקוד מפריד את מקור הזמנים (TimingFeed) מהמסך, כך שבהמשך אפשר להחליף אותו במקור קריאה בלבד, אם יהיה אישור וגישה.</li>
                 <li><b>קריאה למסלול:</b> מסך בלבד, בלי הכרזה קולית. מה מפעיל קריאה באתר האמיתי עוד לא הוחלט. התזמונים בדמו האוטומטי להמחשה.</li>
                 <li><b>כללי שיבוץ:</b> הצעה בלבד. בטיחות, גיל וגובה לא מוגדרים כאן.</li>
             </ul>
@@ -824,92 +893,49 @@ function Settings({ core, update, hist, onReset, site, timing }: { core: L.Core;
     </>;
 }
 
-// ------------------------------------------------------------- decoder (real lap timing)
-/** The bridge sends a heartbeat every 10 s; older than 35 s = not running. */
-function bridgeOk(dec: { data: Cloud.DecoderStatus; updatedAt: number } | null, now: number): boolean {
-    return !!dec && !!dec.data.connected && now - Math.max(dec.updatedAt || 0, dec.data.sentAt || 0) < 35_000;
-}
-const clockOf = (t: number) => new Date(t).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-function DecoderSettings({ core, update, session, recent, dec, now }: { core: L.Core; update: Update; session: boolean; recent: L.Passing[]; dec: { data: Cloud.DecoderStatus; updatedAt: number } | null; now: number }) {
-    const on = L.timingSourceOf(core) === 'decoder';
-    const map = core.settings.transponders ?? {};
-    const maxKart = Math.max(core.settings.capacity, ...Object.keys(map).map(Number).filter(n => n > 0), 0);
-    const [extra, setExtra] = useState(0);
-    const karts = Array.from({ length: Math.min(99, maxKart + extra) }, (_, i) => i + 1);
-    const [assign, setAssign] = useState<Record<string, string>>({});
-    const ok = bridgeOk(dec, Date.now());
-    const upd = (p: Partial<L.Settings>) => update(c => ({ ...c, settings: { ...c.settings, ...p } }));
-    return <Group label="שעון הקפות · דקודר AMB" heading>
-        <div className="field"><span className="flabel">מקור הזמנים</span>
-            <div className="chips" role="radiogroup" aria-label="מקור הזמנים">
-                <button type="button" role="radio" aria-checked={!on} className={`chip${!on ? ' sel' : ''}`} onClick={() => upd({ timingSource: 'sim' })}>סימולציה</button>
-                <button type="button" role="radio" aria-checked={on} className={`chip${on ? ' sel' : ''}`} onClick={() => upd({ timingSource: 'decoder' })}>דקודר AMB (אמיתי)</button>
-            </div>
-            <p className="meta">בדקודר: תוכנת הגשר (dk-bridge) רצה במחשב הנייד שמחובר לדקודר, ושולחת כל מעבר בקו. ההקפות נספרות מרגע "התחלה". מקצה שכבר רץ ממשיך במקור שבו התחיל.</p>
-        </div>
-        {on && <>
-            {!session && <Callout title="צריך להתחבר כצוות" tone="warning">כדי לקבל מעברים מהדקודר צריך להיות מחובר עם משתמש הצוות.</Callout>}
-            {session && <p className={ok ? 'tx-ok' : 'tx-bad'}>
-                {ok ? `✓ הגשר מחובר לדקודר (${dec!.data.source ?? ''}${dec!.data.format ? ` · ${dec!.data.format}` : ''}) · ${dec!.data.passings ?? 0} מעברים`
-                    : dec ? `✗ הגשר לא מחובר לדקודר${dec.data.error ? `: ${dec.data.error}` : ''} · עדכון אחרון ${clockOf(Math.max(dec.updatedAt || 0, dec.data.sentAt || 0))}`
-                        : '✗ עוד לא התקבל סימן מהגשר. הפעל את dk-bridge במחשב של המסלול (הוראות: docs/BRIDGE-HE.md).'}
-            </p>}
-            <Stepper label="הקפה מינימלית (שניות) · קריאות כפולות מתחת לזה לא נספרות" value={Math.round(L.minLapMsOf(core) / 1000)} min={3} max={120} onChange={n => upd({ minLapSec: n })} />
-            <div className="field"><span className="flabel">מעברים אחרונים בקו</span>
-                <p className="meta">העבר קארט על הקו, ראה איזה טרנספונדר הופיע, והקלד את מספר הקארט.</p>
-                {recent.length === 0 ? <p className="meta">עוד אין מעברים.</p> : <ul className="tx-recent">
-                    {recent.slice(0, 15).map(p => {
-                        const k = L.kartOfTransponder(core, p.transponder);
-                        return <li key={p.id ?? `${p.transponder}@${p.t}`}>
-                            <bdi dir="ltr">{clockOf(p.t)}</bdi>
-                            <span><bdi dir="ltr">{p.transponder}</bdi> · {k ? <b>קארט {k}</b> : <span className="tx-bad">לא משויך</span>}</span>
-                            {!k && <span className="inline"><input className="inp" type="number" inputMode="numeric" min={1} max={99} placeholder="קארט" aria-label={`קארט לטרנספונדר ${p.transponder}`} value={assign[p.transponder] ?? ''} onChange={e => setAssign(a => ({ ...a, [p.transponder]: e.target.value }))} />
-                                <Btn small onClick={() => { const n = Number(assign[p.transponder]); if (n >= 1) update(c => L.setTransponder(c, n, p.transponder)); }}>שייך</Btn></span>}
-                        </li>;
-                    })}
-                </ul>}
-            </div>
-        </>}
-        <div className="field"><span className="flabel">קארט ← מספר טרנספונדר</span>
-            <div className="tx-table">
-                {karts.map(k => <label key={k} className="tx-cell"><span className="mt-kart">{k}</span>
-                    <input key={`${k}-${map[String(k)] ?? ''}`} className="inp" inputMode="numeric" placeholder="—" aria-label={`טרנספונדר של קארט ${k}`} defaultValue={map[String(k)] ?? ''} maxLength={12}
-                        onBlur={e => { const v = e.target.value.trim(); if (v !== (map[String(k)] ?? '')) update(c => L.setTransponder(c, k, v)); }}
-                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /></label>)}
-            </div>
-            <Btn small onClick={() => setExtra(x => x + 5)}>עוד קארטים</Btn>
-            <p className="meta">המספר שמודפס על הטרנספונדר שמחובר לקארט. טרנספונדר שעובר לקארט אחר נמחק מהקודם.</p>
-        </div>
-    </Group>;
-}
+const SYNC_SHORT: Record<SyncStatus, string> = { synced: '⇅ מסונכרן', saving: '⇅ שומר…', connecting: '⇅ מתחבר…', offline: '⚠ לא מחובר', local: 'מכשיר זה בלבד', 'no-table': '⚠ לא מחובר' };
+const SYNC_TEXT: Record<SyncStatus, string> = {
+    synced: 'מסונכרן: כל מחשבי הצוות רואים את אותם טפסים, קופה, תור, מקצים ומסלול.',
+    saving: 'שומר את השינוי לכל מחשבי הצוות…',
+    connecting: 'מתחבר למחשבי הצוות…',
+    offline: 'אין חיבור לענן: אפשר להמשיך לעבוד, והשינויים יישלחו לשאר המחשבים כשהחיבור יחזור.',
+    'no-table': 'אין חיבור לענן: אפשר להמשיך לעבוד, והשינויים יישלחו לשאר המחשבים כשהחיבור יחזור.',
+    local: 'השינויים נשמרים במכשיר הזה בלבד (לא מחובר כצוות).',
+};
+const SYNC_ORDER: SyncStatus[] = ['offline', 'no-table', 'local', 'connecting', 'saving', 'synced'];
+const worst = (a: SyncStatus, b: SyncStatus) => (SYNC_ORDER.indexOf(a) <= SYNC_ORDER.indexOf(b) ? a : b);
 
 // ---------------------------------------------------------------------- app
 export function App() {
-    const [core, setCoreRaw, savedCore] = useLocalState<L.Core>('dankart.core.v1', L.initialCore());
-    const [hist, setHistRaw, savedHist] = useLocalState<L.Result[]>('dankart.hist.v1', []);
+    // Staff session first: while signed in, core and history are shared by every staff computer (see shared.ts).
+    const [session, setSession] = useState<Session | null>(null);
+    useEffect(() => Cloud.onSession(setSession), []);
+    const online = !!session;
+    const shCore = useShared<L.Core>('core', legacy<L.Core>('dankart.core.v1') ?? L.initialCore(), online, L.migrateTickets);
+    const shHist = useShared<L.Result[]>('hist', legacy<L.Result[]>('dankart.hist.v1') ?? [], online);
+    const core = shCore.value; const hist = shHist.value;
     const [tab, setTab] = useState<Tab>('cashier');
     const [screen, setScreen] = useState<'track' | 'last' | null>(null);
     const [auto, setAutoRaw] = useState(false);
     const [now, setNow] = useState(() => Date.now());
-    const ready = savedCore.ready && savedHist.ready;
-    // Saved data from before the four ticket types gets the real ticket list once.
-    useEffect(() => { if (ready) { const m = L.migrateTickets(core); if (m !== core) setCoreRaw(m); } }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+    const ready = true;
 
-    // Public website: staff session + "broadcast" switch (per device). Publishes the board on every change.
-    const [session, setSession] = useState<Session | null>(null);
-    useEffect(() => Cloud.onSession(setSession), []);
+    // Public website: "broadcast" switch (per device). Publishes the board on every change.
     const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v1', true);
     const [pubStatus, setPubStatus] = useState('');
+    const rxRaw = useRentix();
+    // direct decoder: kart numbers from the transponder map (Settings), before anything is shown or published
+    const rx: RxState = rxRaw.ext ? { ...rxRaw, ext: R.withKarts(rxRaw.ext, core.settings.transponders) } : rxRaw;
+    const extNow = R.extActive(rx.ext) ? rx.ext : null;
     const sending = ready && !!session && broadcast;
     const periodKey = L.periodStart(now, L.histResetOf(core));
     useEffect(() => {
         if (!sending) { setPubStatus(''); return; }
         const t = setTimeout(() => {
-            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), L.currentPeriod(hist, Date.now(), L.histResetOf(core)))).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
+            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), L.currentPeriod(hist, Date.now(), L.histResetOf(core)), extNow)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
         }, 300);
         return () => clearTimeout(t);
-    }, [sending, core, hist, periodKey]);
+    }, [sending, core, hist, periodKey, extNow && JSON.stringify(extNow.rows) + extNow.flag + extNow.run + Math.floor((extNow.timeToGo ?? 0) / 5000)]);
     // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
     useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -917,55 +943,17 @@ export function App() {
     const coreRef = useRef(core); coreRef.current = core;
     const histRef = useRef(hist); histRef.current = hist;
     const readyRef = useRef(ready); readyRef.current = ready;
-    const update: Update = fn => {
-        if (!readyRef.current) return;
-        const next = fn(coreRef.current);
-        if (next === coreRef.current) return;
-        coreRef.current = next;
-        setCoreRaw(next);
-    };
-    const setHist = (h: L.Result[]) => { if (readyRef.current) { histRef.current = h; setHistRaw(h); } };
-
-    // Real lap timing: crossings from the bridge program (decoder) arrive through Supabase in real time.
-    const decoderOn = ready && !!session && L.timingSourceOf(core) === 'decoder';
-    const [recent, setRecent] = useState<L.Passing[]>([]);
-    const [dec, setDec] = useState<{ data: Cloud.DecoderStatus; updatedAt: number } | null>(null);
-    useEffect(() => {
-        if (!decoderOn) return;
-        void Cloud.fetchRecentPassings(30).then(r => { if (r) setRecent(r); });
-        return Cloud.subscribePassings(p => {
-            setRecent(r => [p, ...r.filter(x => x.id !== p.id)].slice(0, 30));
-            update(c => L.addPassings(c, [p]));
-        });
-    }, [decoderOn]); // eslint-disable-line react-hooks/exhaustive-deps
-    // Bridge heartbeat, read whenever staff is signed in. One step to go live: as soon as the bridge on the track
-    // laptop is connected to the decoder, a device that never chose a timing source switches to the decoder by itself.
-    useEffect(() => {
-        if (!ready || !session) return;
-        const poll = () => void Cloud.fetchDecoderStatus().then(d => {
-            setDec(d);
-            if (bridgeOk(d, Date.now()) && coreRef.current.settings.timingSource === undefined) update(c => ({ ...c, settings: { ...c.settings, timingSource: 'decoder' } }));
-        });
-        poll();
-        const i = setInterval(poll, 10_000);
-        return () => clearInterval(i);
-    }, [ready, session]); // eslint-disable-line react-hooks/exhaustive-deps
-    // catch up on crossings of the heat on track (page reloaded, or a gap in the live connection): every 15 s
-    const liveStart = core.live?.source === 'decoder' ? core.live.t0 : null;
-    useEffect(() => {
-        if (!decoderOn || liveStart == null) return;
-        const catchUp = () => void Cloud.fetchPassings(liveStart).then(ps => { if (ps) update(c => L.addPassings(c, ps)); });
-        catchUp();
-        const i = setInterval(catchUp, 15_000);
-        return () => clearInterval(i);
-    }, [decoderOn, liveStart]); // eslint-disable-line react-hooks/exhaustive-deps
+    const update: Update = fn => { coreRef.current = shCore.apply(fn); };
+    // History edits are functions too, so two computers finishing heats never drop each other's results.
+    const updHist = (fn: (h: L.Result[]) => L.Result[]) => { histRef.current = shHist.apply(fn); };
 
     const autoRef = useRef(auto); autoRef.current = auto;
     const start = (id: string) => update(c => L.startHeat(c, id, Date.now(), Date.now() % 100000, autoRef.current ? DEMO.speed : 5));
     const save = () => {
-        const { core: next, result } = L.finishRun(coreRef.current, Date.now());
-        if (result) { setHist(L.trimHistory([result, ...histRef.current])); void Cloud.archiveHeats([result]); }
-        update(() => next);
+        const t = Date.now();
+        const { result } = L.finishRun(coreRef.current, t);
+        if (result) { updHist(h => L.trimHistory(L.mergeResults([result], h), L.SHARED_HISTORY_BYTES)); void Cloud.archiveHeats([result]); }
+        update(c => (c.live && c.live.heatId === result?.heatId) || !result ? L.finishRun(c, t).core : c);
     };
     const setAuto = (b: boolean) => { autoRef.current = b; phase.current = { key: '', since: 0 }; setAutoRaw(b); };
     const cancel = () => { setAuto(false); update(L.cancelRun); };
@@ -1001,11 +989,12 @@ export function App() {
         return () => clearInterval(i);
     }, [ticking]);
 
-    const msg = `${savedCore.message || ''} ${savedHist.message || ''}`.trim();
+    const msg = '';
     const volatile = ready && /not saved|only while|memory/i.test(msg);
     const persistNote = !ready ? 'טוען…' : volatile
         ? 'בתצוגה הזו השינויים לא נשמרים: הם נשארים רק כל עוד הקובץ פתוח.'
-        : /fail|error|unavailable|blocked|full/i.test(msg) ? `השמירה במכשיר לא הצליחה (${msg}).` : 'השינויים נשמרים במכשיר הזה בלבד.';
+        : /fail|error|unavailable|blocked|full/i.test(msg) ? `השמירה במכשיר לא הצליחה (${msg}).` : SYNC_TEXT[worst(shCore.status, shHist.status)];
+    const syncSt = worst(shCore.status, shHist.status);
     const pending = core.groups.filter(g => L.unassignedOf(core, g) > 0).length;
     const counts: Partial<Record<Tab, number>> = { cashier: pending + L.pendingOf(core).length, heats: core.heats.filter(h => h.status === 'draft' && h.entries.length > 0).length, live: L.queueOf(core).length };
     const lastRes = hist[0];
@@ -1013,7 +1002,7 @@ export function App() {
 
     return <FileCard lang="he">
         <div className="dk">
-            <div className="brandbar"><Logo /><span className="brand-tag">דמו · נתוני דמה</span>{sending && <span className="brand-tag onair-tag">● משדר לאתר</span>}{L.timingSourceOf(core) === 'decoder' && <button type="button" className={`sim-badge real${bridgeOk(dec, Date.now()) ? '' : ' off'}`} onClick={() => setTab('settings')}>{bridgeOk(dec, Date.now()) ? 'דקודר מחובר' : 'דקודר לא מחובר'}</button>}{core.live && <button type="button" className="onair" onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} על המסלול</button>}</div>
+            <div className="brandbar"><Logo /><span className="brand-tag">דמו · נתוני דמה</span><span className={`brand-tag sync-tag ${syncSt}`} title={SYNC_TEXT[syncSt]}>{SYNC_SHORT[syncSt]}</span>{sending && <span className="brand-tag onair-tag">● משדר לאתר</span>}{rx.up && <span className={`brand-tag rx-tag${rx.connected ? '' : ' bad'}`} title={rx.error}>{rx.connected ? (extNow ? `● ${R.sourceName(rx.source)} · ${extNow.run || 'מקצה'}` : `● ${R.sourceName(rx.source)} מחובר`) : '⚠ אין חיבור ל-RentiX או לדקודר'}</span>}{core.live && <button type="button" className="onair" onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} על המסלול</button>}</div>
             <Header title="מקצים ותור" fact="גרסת דמו · נתוני דמה" intro="קופה, שיבוץ מקצים, תור פשוט, קריאה למסלול וזמנים מדומים. אפשר לשדר את לוח הזמנים לאתר ציבורי (הגדרות). אין חיבור לשעון של העסק." />
             <nav className="tabs" aria-label="מסכים">
                 {TABS.map(t => <button key={t.id} type="button" className={tab === t.id ? 'on' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}>{t.label}{t.id === 'live' && core.live ? <i className="live-dot" aria-label="מקצה על המסלול">●</i> : counts[t.id] ? <i>{counts[t.id]}</i> : null}</button>)}
@@ -1022,11 +1011,11 @@ export function App() {
             {ready && tab === 'form' && <CustomerForm core={core} update={update} />}
             {ready && tab === 'cashier' && <Cashier core={core} update={update} goHeats={goHeats} />}
             {ready && tab === 'heats' && <Heats core={core} update={update} />}
-            {ready && tab === 'live' && <Live core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} save={save} start={start} cancel={cancel} goHeats={goHeats} />}
+            {ready && tab === 'live' && <Live rx={rx} core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} save={save} start={start} cancel={cancel} goHeats={goHeats} />}
             {ready && tab === 'history' && <HistoryTab core={core} update={update} hist={hist} now={now} />}
-            {ready && tab === 'settings' && <Settings site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} timing={<DecoderSettings core={core} update={update} session={!!session} recent={recent} dec={dec} now={now} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); setHist([]); }} />}
+            {ready && tab === 'settings' && <Settings rx={rx} site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); updHist(() => []); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
-            {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} />}
+            {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} ext={extNow} />}
             {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות מקצה ${lastRes.heatNum}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
         </div>
     </FileCard>;
@@ -1057,7 +1046,7 @@ export function PublicBoard() {
         <StaffShield />
     </div>;
     return <div className="dk pub">
-        <TrackScreen core={board.core} now={clock} onClose={() => {}} />
+        <TrackScreen core={board.core} now={clock} onClose={() => {}} ext={board.ext && now - board.sentAt < 60_000 ? board.ext : null} />
         <StaffShield />
         <button type="button" className="pub-hbtn" onClick={() => setShowHist(true)}>היסטוריית מקצים ({hist.length})</button>
         <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>

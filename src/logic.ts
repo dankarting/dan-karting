@@ -55,22 +55,13 @@ export type Settings = {
     /** Ticket types where two participants share one kart and pay one price (זוגי). */
     pairTickets?: string[];
     kartMode?: KartMode;
-    /** Kart number -> transponder number (the number printed on the transponder fixed to that kart). */
+    /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
     transponders?: Record<string, string>;
-    /** Where lap times come from: 'sim' (demo) or 'decoder' (the AMB decoder through the bridge program). Unset = sim. */
-    timingSource?: TimingSource;
-    /** Decoder mode: crossings closer than this to the previous one are ignored (double reads). Default 15 s. */
-    minLapSec?: number;
 };
-export type TimingSource = 'sim' | 'decoder';
-export const timingSourceOf = (core: Core): TimingSource => core.settings.timingSource ?? 'sim';
-export const minLapMsOf = (core: Core): number => Math.max(3, Math.min(120, core.settings.minLapSec ?? 15)) * 1000;
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** durationMs set = timed heat (fixed when the heat starts). Unset = legacy lap-limited run. */
-/** Decoder runs (source 'decoder'): real crossings received since the green flag (t0) are kept in `passings`,
- *  so every screen, including the public board, computes the same laps. */
-export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number; source?: 'decoder'; passings?: Passing[] };
+export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number };
 
 export const MIN_HEAT_MINUTES = 10;
 export const MAX_HEAT_MINUTES = 30;
@@ -409,9 +400,7 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
     if (!h || core.live || startBlockers(core, h).length) return core;
     return {
         ...core,
-        live: timingSourceOf(core) === 'decoder'
-            ? { heatId, t0: now, seed, speed: 1, durationMs: minutesOfHeat(core, h) * 60_000, source: 'decoder', passings: [] }
-            : { heatId, t0: now, seed, speed, durationMs: minutesOfHeat(core, h) * 60_000 },
+        live: { heatId, t0: now, seed, speed, durationMs: minutesOfHeat(core, h) * 60_000 },
         heats: core.heats.map(x => (x.id === heatId ? { ...x, called: false } : x)),
     };
 }
@@ -421,7 +410,7 @@ export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (liv
 
 /** Change simulation speed without jumping the clock. */
 export function setSpeed(core: Core, speed: number, now: number): Core {
-    if (!core.live || speed <= 0 || core.live.source === 'decoder') return core;
+    if (!core.live || speed <= 0) return core;
     const el = elapsedOf(core.live, now);
     return { ...core, live: { ...core.live, speed, t0: now - el / speed } };
 }
@@ -430,13 +419,9 @@ export function setSpeed(core: Core, speed: number, now: number): Core {
 export function liveTiming(core: Core, now: number, feed?: TimingFeed): DriverTiming[] {
     const h = runningHeat(core);
     if (!h || !core.live) return [];
-    const live = core.live;
-    const drivers = driversOf(core, h), el = elapsedOf(live, now);
-    const f = feed ?? (live.source === 'decoder'
-        ? makePassingFeed(() => live.passings ?? [], live.t0, transponderOf(core), { ...DEFAULT_LAP_RULES, minLapMs: minLapMsOf(core) })
-        : makeSimulatedFeed(live.seed, transponderOf(core)));
-    if (live.durationMs) return timedTiming(f.snapshot(drivers, el, TIMED_LAP_CAP), live.durationMs);
-    return f.snapshot(drivers, el, core.settings.laps);
+    const drivers = driversOf(core, h), el = elapsedOf(core.live, now);
+    if (core.live.durationMs) return timedTiming((feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, TIMED_LAP_CAP), core.live.durationMs);
+    return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, core.settings.laps);
 }
 
 const TIMED_LAP_CAP = 200;
@@ -464,7 +449,7 @@ export function timeLeft(live: LiveRun | null | undefined, now: number): number 
 export function finishRun(core: Core, now: number, feed?: TimingFeed): { core: Core; result: Result | null } {
     const h = runningHeat(core);
     if (!h) return { core: { ...core, live: null }, result: null };
-    const result = resultOf(core, h, liveTiming(core, now, feed), now, !feed && core.live?.source !== 'decoder');
+    const result = resultOf(core, h, liveTiming(core, now, feed), now, !feed);
     return {
         core: { ...core, live: null, heats: core.heats.map(x => (x.id === h.id ? { ...x, status: 'done' as const, called: false } : x)) },
         result,
@@ -631,7 +616,7 @@ export interface TimingFeed {
 }
 
 /** One crossing of the timing line, as a decoder would report it. `t` is ms on the timing clock. */
-export type Passing = { transponder: string; t: number; id?: string };
+export type Passing = { transponder: string; t: number };
 
 export type LapRules = {
     /** Crossings closer than this to the previous counted one are ignored (double reads, pit-lane noise). Demo value, not a venue setting yet. */
@@ -645,17 +630,14 @@ export type LapRules = {
 };
 export const DEFAULT_LAP_RULES: LapRules = { minLapMs: 15000, firstCrossing: 'lap' };
 
-/** Kart -> transponder id. A kart without a mapped transponder gets a synthetic id (simulation only). */
+/** Kart -> transponder id. The real mapping (fixed per kart? swapped?) is unknown; the default is a synthetic id. */
 export const simTransponder = (kart: number) => `SIM-${kart}`;
 export const transponderOf = (core: Core) => (kart: number) => core.settings.transponders?.[String(kart)] || simTransponder(kart);
 
-/** Kart number a transponder is mapped to, or null. */
-export function kartOfTransponder(core: Core, tx: string): number | null {
-    for (const [k, v] of Object.entries(core.settings.transponders ?? {})) if (v === tx) return Number(k);
-    return null;
-}
-
-/** Map a transponder to a kart. A transponder belongs to one kart only. Empty = remove the kart's mapping. */
+/**
+ * Map a transponder to a kart (Settings, used by the direct decoder board). A transponder belongs to one kart
+ * only, so it is removed from any other kart first. Empty transponder = remove the kart's mapping.
+ */
 export function setTransponder(core: Core, kart: number, tx: string): Core {
     const k = Math.floor(kart);
     if (!(k >= 1 && k <= 99)) return core;
@@ -663,26 +645,6 @@ export function setTransponder(core: Core, kart: number, tx: string): Core {
     const map = Object.fromEntries(Object.entries(core.settings.transponders ?? {}).filter(([key, x]) => key !== String(k) && (!v || x !== v)));
     if (v) map[String(k)] = v;
     return { ...core, settings: { ...core.settings, transponders: map } };
-}
-
-/** Decoder mode: add crossings from the bridge to the heat on track. Only crossings after the green flag count; resends are skipped. Pure. */
-export function addPassings(core: Core, ps: Passing[]): Core {
-    const live = core.live;
-    if (!live || live.source !== 'decoder' || ps.length === 0) return core;
-    const key = (p: Passing) => p.id ?? `${p.transponder}@${p.t}`;
-    const have = live.passings ?? [];
-    const seen = new Set(have.map(key));
-    const add: Passing[] = [];
-    for (const p of ps) if (p.t >= live.t0 && !seen.has(key(p))) { seen.add(key(p)); add.push(p); }
-    if (add.length === 0) return core;
-    return { ...core, live: { ...live, passings: [...have, ...add].sort((a, b) => a.t - b.t) } };
-}
-
-/** Decoder mode: transponders crossing the line during this heat that belong to no driver in it. */
-export function unknownOnTrack(core: Core): string[] {
-    const h = runningHeat(core);
-    if (!h || core.live?.source !== 'decoder') return [];
-    return unknownTransponders(driversOf(core, h), core.live.passings ?? [], transponderOf(core));
 }
 
 /** Pure: build each driver's laps from raw passings. Passings may arrive unsorted and with duplicates. */
@@ -835,6 +797,8 @@ export function mergeResults(...lists: Result[][]): Result[] {
 }
 
 /** Device copy of the history (the full archive lives in the cloud). ~2 MB keeps months of heats in browser storage. */
+/** History shared between staff computers stays small (live sync); everything is also in the heat_history archive. */
+export const SHARED_HISTORY_BYTES = 250_000;
 export function trimHistory(h: Result[], maxBytes = 2_000_000): Result[] {
     let out = h;
     while (out.length > 1 && JSON.stringify(out).length > maxBytes) out = out.slice(0, -1);

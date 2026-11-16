@@ -25,6 +25,21 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 - Public heat history: staff device publishes the last 30 finished heats (BoardPayload.hist); the public page has a
   "היסטוריית מקצים" button (read-only list, search by name).
 
+## Shared staff state across computers (owner, 2026-11-16)
+- src/shared.ts useShared(key): core and hist live in Supabase public.staff_state (rows 'core', 'hist'; staff-only RLS;
+  docs/staff-sync.sql). Edits stay functions (core => core): applied locally at once, then saved with a rev check;
+  on conflict the newest copy is loaded and the pending functions are replayed on it. Realtime + 5 s poll fallback.
+  Offline keeps working from the local copy (localStorage cache) and catches up; pending edits are lost if the page
+  reloads while offline. First computer to connect seeds an empty cloud row from its local data.
+- Brand bar shows sync state (מסונכרן / שומר / לא מחובר).
+
+## RentiX live timing (ported from the gen 5 branch, 2026-11-16)
+- public/rentix-bridge.ps1 on the staff laptop reads RentiX RMonitor (TCP 192.168.0.1:50000) and serves it on
+  localhost:8787. src/rentix.ts parses it; while it has drivers the track screen, Live tab and public site show it.
+- bridge/ (dk-bridge.exe, Go) replaces the ps1 on the same localhost:8787: RentiX first (read-only), else the AMB
+  decoder directly (source "decoder", transponder -> kart map in Settings). One timing path. docs/BRIDGE-HE.md.
+  Not yet tested against the real hardware.
+
 ## Heat history: permanent archive + daily/weekly reset (owner, 2026-11-16)
 - Every finished heat is inserted into Supabase table public.heat_history (docs/heat-history.sql; anon read, staff insert only).
   The staff device also back-fills its local history to the archive whenever a staff session starts.

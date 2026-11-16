@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import * as L from '../src/logic';
+import * as R from '../src/rentix';
 
 // Tiny counted harness: each test() is one named case; the run fails (exit 1) on any failure.
 let passed = 0; const failed: string[] = [];
@@ -440,46 +441,6 @@ test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאס�
     assert.equal(m.settings.prices?.['רגיל'], 87);
 });
 
-test('decoder timing: transponder map, real passings -> laps, double reads, resends, real result', () => {
-    let c = twoQueued();
-    c = { ...c, settings: { ...c.settings, timingSource: 'decoder' as const } };
-    c = L.setTransponder(c, 1, '1000001');
-    c = L.setTransponder(c, 2, '1000002');
-    c = L.setTransponder(c, 3, '1000001'); // moved to kart 3: one transponder, one kart
-    assert.equal(L.kartOfTransponder(c, '1000001'), 3);
-    assert.equal(c.settings.transponders!['1'], undefined);
-    c = L.setTransponder(c, 1, '1000009');
-    const T0 = 1_000_000;
-    let r = L.startHeat(c, c.heats[0].id, T0, 5, 20);
-    assert.equal(r.live!.source, 'decoder'); assert.equal(r.live!.speed, 1, 'no speed-up with real timing');
-    assert.equal(L.setSpeed(r, 5, T0 + 10), r);
-    const ps: L.Passing[] = [
-        { transponder: '1000009', t: T0 - 5000, id: 'old' }, // before the green flag: ignored
-        { transponder: '1000009', t: T0 + 40_000, id: 'a1' },
-        { transponder: '1000009', t: T0 + 40_200, id: 'dbl' }, // double read
-        { transponder: '1000009', t: T0 + 78_000, id: 'a2' },
-        { transponder: '1000002', t: T0 + 42_000, id: 'b1' },
-        { transponder: '7777777', t: T0 + 45_000, id: 'x' },
-    ];
-    r = L.addPassings(r, ps);
-    assert.equal(L.addPassings(r, ps), r, 'resent passings are ignored');
-    assert.equal(r.live!.passings!.length, 5);
-    const tm = L.liveTiming(r, T0 + 80_000);
-    assert.deepEqual(tm[0].laps, [40_000, 38_000]); assert.equal(tm[0].best, 38_000);
-    assert.deepEqual(tm[1].laps, [42_000]); assert.deepEqual(tm[2].laps, []);
-    assert.deepEqual(L.unknownOnTrack(r), ['7777777']);
-    // 10 minute heat: the first crossing after 10:00 is the last lap
-    r = L.addPassings(r, [{ transponder: '1000009', t: T0 + 590_000, id: 'a3' }, { transponder: '1000009', t: T0 + 630_000, id: 'a4' }, { transponder: '1000009', t: T0 + 670_000, id: 'a5' }]);
-    const end = L.liveTiming(r, T0 + 700_000)[0];
-    assert.equal(end.finished, true); assert.equal(end.laps.length, 4);
-    const { result } = L.finishRun(r, T0 + 700_000);
-    assert.equal(result!.simulated, false, 'a decoder heat is saved as real timing');
-    assert.equal(result!.rows[0].kart, 1);
-    // simulation mode is unchanged
-    const s = L.startHeat(twoQueued(), twoQueued().heats[0].id, 0, 3, 5);
-    assert.equal(s.live!.source, undefined); assert.equal(L.addPassings(s, ps), s);
-});
-
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
 
@@ -518,4 +479,51 @@ test('history period: resets at local midnight (day) or Saturday night (week); a
     assert.equal(L.currentPeriod(hist, wed, 'day').length, 1);
     assert.equal(L.currentPeriod(hist, wed, 'week').length, 2);
     assert.equal(L.mergeResults(hist, [r(wed)], [r(wed + 1, 'x')]).length, 4);
+});
+
+test('RentiX feed (RMonitor) -> board: names, karts, laps, best, last, order; reset clears', () => {
+    const lines = [
+        '$I,"16:00:00.000","16 Nov 26"',
+        '$B,12,"מקצה 12"',
+        '$A,"5","5",1005,"שירה","כהן","",1',
+        '$COMP,"7","7",1,"Avi","","",""',
+        '$J,"5","00:00:41.200","00:00:41.200"',
+        '$J,"7","00:00:43.000","00:00:43.000"',
+        '$J,"5","00:00:39.900","00:01:21.100"',
+        '$G,1,"5",2,"00:01:21.100"',
+        '$G,2,"7",1,"00:00:43.000"',
+        '$H,1,"5",2,"00:00:39.900"',
+        '$F,9999,"00:08:30","16:01:30","00:01:30","Green "',
+    ];
+    const b = R.parseRMonitor(lines, 1);
+    assert.equal(b.run, 'מקצה 12'); assert.equal(b.flag, 'Green');
+    assert.equal(b.timeToGo, 510_000); assert.equal(b.raceTime, 90_000);
+    assert.deepEqual(b.rows.map(r => [r.pos, r.kart, r.name, r.laps]), [[1, 5, 'שירה כהן', 2], [2, 7, 'Avi', 1]]);
+    assert.equal(b.rows[0].best, 39_900); assert.equal(b.rows[0].last, 39_900); assert.equal(b.rows[0].total, 81_100);
+    assert.ok(R.extActive(b));
+    assert.equal(R.parseRMonitor([...lines, '$I,"16:10:00","16 Nov 26"'], 2).rows.length, 0, 'a reset starts a new session');
+    assert.deepEqual(R.splitRecord('$A,"a,b","x""y",3'), ['$A', 'a,b', 'x"y', '3']);
+    assert.equal(R.timeMs('01:02:03.5'), 3_723_500); assert.equal(R.timeMs(''), null);
+});
+
+test('direct decoder board (dk-bridge): transponders mapped to karts in Settings, unmapped listed', () => {
+    // lines exactly as dk-bridge renders a decoder heat
+    const lines = ['$I,"20:49:37.614","decoder"', '$B,1,"מקצה 1 · דקודר"', '$F,"","00:00:00","20:49:47","00:01:21.000","Green"',
+        '$A,"1118533","",1118533,"","","",""', '$A,"237062","",237062,"","","",""',
+        '$G,1,"1118533",2,"00:01:20.000"', '$H,1,"1118533",0,"00:00:39.000"', '$G,2,"237062",1,"00:00:43.000"',
+        '$J,"1118533","00:00:41.000","00:00:41.000"', '$J,"1118533","00:00:39.000","00:01:20.000"', '$J,"237062","00:00:43.000","00:00:43.000"'];
+    const ext = R.parseRMonitor(lines, 1, 'decoder');
+    assert.equal(ext.src, 'decoder'); assert.equal(ext.rows[0].tx, '1118533'); assert.equal(ext.rows[0].best, 39_000);
+    let c = L.initialCore();
+    c = L.setTransponder(c, 7, '1118533');
+    c = L.setTransponder(c, 3, '1118533'); // moved: one transponder, one kart
+    assert.deepEqual(c.settings.transponders, { '3': '1118533' });
+    const m = R.withKarts(ext, c.settings.transponders);
+    assert.equal(m.rows[0].kart, 3); assert.equal(m.rows[0].name, 'קארט 3');
+    assert.deepEqual(R.unmappedTx(m, c.settings.transponders), ['237062']);
+    assert.equal(m.rows[1].kart, 0); assert.equal(m.rows[1].name, 'טרנספונדר 237062', 'an unmapped transponder is not shown as a kart number');
+    // RentiX boards keep RentiX's own kart numbers
+    const rx = R.parseRMonitor(['$A,"5","5",1118533,"Dana","K","",1', '$G,1,"5",1,"00:00:40.000"'], 1);
+    assert.equal(R.withKarts(rx, c.settings.transponders).rows[0].kart, 5);
+    assert.equal(R.sourceName('decoder'), 'דקודר AMB'); assert.equal(R.sourceName('rentix'), 'RentiX');
 });

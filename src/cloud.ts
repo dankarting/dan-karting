@@ -5,6 +5,7 @@
 // staff accounts created by the owner in the Supabase dashboard can sign in.
 import { createClient, type Session } from '@supabase/supabase-js';
 import type * as L from './logic';
+import type { ExtBoard } from './rentix';
 
 export const SUPABASE_URL = 'https://fqytpdapnvbpfonatopt.supabase.co';
 export const SUPABASE_KEY = 'sb_publishable_RANVYVqyzWASfwYdThRXtQ_SHfUjJa9';
@@ -17,12 +18,12 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 /** What the public page receives: only what the venue screen shows. Unpaid form submissions stay on the cashier device. */
 /** hist: finished heats (newest first) for the public history view. */
-export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[] };
+export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[]; ext?: ExtBoard | null };
 
 export const PUBLIC_HISTORY = 150;
-export function boardOf(core: L.Core, now: number, hist: L.Result[] = []): BoardPayload {
+export function boardOf(core: L.Core, now: number, hist: L.Result[] = [], ext: ExtBoard | null = null): BoardPayload {
     const { submissions: _unpaid, ...rest } = core;
-    return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY) };
+    return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
 }
 
 export async function publishBoard(payload: BoardPayload): Promise<string | null> {
@@ -88,40 +89,29 @@ export function onSession(cb: (s: Session | null) => void): () => void {
     return () => data.subscription.unsubscribe();
 }
 
-// ------------------------------------------------------------ decoder (AMB) through the bridge program
-// The bridge on the track laptop inserts one row per crossing into public.passings and keeps a heartbeat
-// in public.decoder_status (docs/decoder-setup.sql). Staff only: the public site gets laps via the board.
-type PassingRow = { uid: string; transponder: string; t: number };
-const toPassing = (r: PassingRow): L.Passing => ({ id: r.uid, transponder: String(r.transponder), t: Number(r.t) });
-
-/** Crossings at or after `sinceMs` (oldest first). */
-export async function fetchPassings(sinceMs: number, limit = 3000): Promise<L.Passing[] | null> {
-    const { data, error } = await supabase.from('passings').select('uid,transponder,t').gte('t', sinceMs).order('t', { ascending: true }).limit(limit);
+// ---------------------------------------------------------------- shared staff state
+// One row per key in public.staff_state (signed-in staff only: read + write). Every staff computer reads it, follows
+// changes in real time and writes with a revision check, so two computers never silently overwrite each other.
+const STATE = 'staff_state';
+export type StateRow<T> = { data: T | null; rev: number };
+/** null = could not reach the cloud (offline, not signed in, or the table does not exist yet). */
+export async function loadState<T>(key: string): Promise<StateRow<T> | null> {
+    const { data, error } = await supabase.from(STATE).select('data, rev').eq('id', key).maybeSingle();
     if (error || !data) return null;
-    return (data as PassingRow[]).map(toPassing);
+    return { data: (data.data ?? null) as T | null, rev: Number(data.rev) || 0 };
 }
-
-/** Latest crossings, newest first (Settings: "who just crossed the line"). */
-export async function fetchRecentPassings(limit = 30): Promise<L.Passing[] | null> {
-    const { data, error } = await supabase.from('passings').select('uid,transponder,t').order('t', { ascending: false }).limit(limit);
-    if (error || !data) return null;
-    return (data as PassingRow[]).map(toPassing);
+/** Writes only if nobody else wrote since `rev`. 'conflict' = someone did; reload and re-apply. */
+export async function saveState<T>(key: string, value: T, rev: number): Promise<'ok' | 'conflict' | 'error'> {
+    const { data, error } = await supabase.from(STATE).update({ data: value, rev: rev + 1, updated_at: new Date().toISOString() }).eq('id', key).eq('rev', rev).select('rev');
+    if (error) return 'error';
+    return data && data.length ? 'ok' : 'conflict';
 }
-
-/** Every new crossing, as it arrives. Returns an unsubscribe function. */
-export function subscribePassings(cb: (p: L.Passing) => void, onStatus?: (s: string) => void): () => void {
-    const ch = supabase.channel('passings_live')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'passings' }, msg => {
-            const r = msg.new as PassingRow | undefined;
-            if (r && r.transponder != null && r.t != null) cb(toPassing(r));
+export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void, onStatus?: (s: string) => void): () => void {
+    const ch = supabase.channel('staff_state_all')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: STATE }, msg => {
+            const r = msg.new as { id?: string; data?: unknown; rev?: number } | undefined;
+            if (r?.id) cb(r.id, { data: r.data ?? null, rev: Number(r.rev) || 0 });
         })
-        .subscribe(status => onStatus?.(status));
+        .subscribe(s => onStatus?.(s));
     return () => { void supabase.removeChannel(ch); };
-}
-
-export type DecoderStatus = { connected?: boolean; source?: string; format?: string; passings?: number; lastTransponder?: string; lastAt?: number; error?: string; pending?: number; version?: string; sentAt?: number };
-export async function fetchDecoderStatus(): Promise<{ data: DecoderStatus; updatedAt: number } | null> {
-    const { data, error } = await supabase.from('decoder_status').select('data,updated_at').eq('id', 'main').maybeSingle();
-    if (error || !data) return null;
-    return { data: (data.data ?? {}) as DecoderStatus, updatedAt: Date.parse(data.updated_at as string) };
 }
