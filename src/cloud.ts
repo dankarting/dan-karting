@@ -88,3 +88,30 @@ export function onSession(cb: (s: Session | null) => void): () => void {
     const { data } = supabase.auth.onAuthStateChange((_e, s) => cb(s));
     return () => data.subscription.unsubscribe();
 }
+
+// ---------------------------------------------------------------- shared staff state
+// One row per key in public.staff_state (signed-in staff only: read + write). Every staff computer reads it, follows
+// changes in real time and writes with a revision check, so two computers never silently overwrite each other.
+const STATE = 'staff_state';
+export type StateRow<T> = { data: T | null; rev: number };
+/** null = could not reach the cloud (offline, not signed in, or the table does not exist yet). */
+export async function loadState<T>(key: string): Promise<StateRow<T> | null> {
+    const { data, error } = await supabase.from(STATE).select('data, rev').eq('id', key).maybeSingle();
+    if (error || !data) return null;
+    return { data: (data.data ?? null) as T | null, rev: Number(data.rev) || 0 };
+}
+/** Writes only if nobody else wrote since `rev`. 'conflict' = someone did; reload and re-apply. */
+export async function saveState<T>(key: string, value: T, rev: number): Promise<'ok' | 'conflict' | 'error'> {
+    const { data, error } = await supabase.from(STATE).update({ data: value, rev: rev + 1, updated_at: new Date().toISOString() }).eq('id', key).eq('rev', rev).select('rev');
+    if (error) return 'error';
+    return data && data.length ? 'ok' : 'conflict';
+}
+export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void, onStatus?: (s: string) => void): () => void {
+    const ch = supabase.channel('staff_state_all')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: STATE }, msg => {
+            const r = msg.new as { id?: string; data?: unknown; rev?: number } | undefined;
+            if (r?.id) cb(r.id, { data: r.data ?? null, rev: Number(r.rev) || 0 });
+        })
+        .subscribe(s => onStatus?.(s));
+    return () => { void supabase.removeChannel(ch); };
+}
