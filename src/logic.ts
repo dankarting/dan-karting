@@ -55,7 +55,14 @@ export type Settings = {
     cashierEnabled?: boolean;
     /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
     transponders?: Record<string, string>;
+    /**
+     * What the public (customer) website shows. 'heat' (default): always the heat — live timing while a heat
+     * runs, otherwise the latest results. 'lineup': between heats it shows the queue / call-up screen.
+     */
+    publicView?: PublicView;
 };
+export type PublicView = 'heat' | 'lineup';
+export const publicViewOf = (core: Core): PublicView => core.settings.publicView ?? 'heat';
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** pausedAt: set while a marshal has stopped the heat ("עצור"); the clock and simulated laps freeze. */

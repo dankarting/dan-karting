@@ -584,3 +584,5 @@ body { background: #0b0b0c; }
 .onair-tag.bad, .onair-tag.off { padding: 3px 8px; border-radius: 6px; }
 .onair-tag.bad { background: #5a1010; color: #fff; border: 1px solid #e11; cursor: pointer; font: inherit; font-size: 12px; }
 .onair-tag.off { background: #3a3000; color: #ffd84a; border: 1px solid #c9a400; cursor: pointer; font: inherit; font-size: 12px; }
+.pv-field { margin-bottom: 12px; }
+.pub .wall .call-next { padding-inline-start: 56px; }

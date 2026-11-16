@@ -542,6 +542,19 @@ function BoardControls({ core, now, act, shown, setShown }: { core: L.Core; now:
     </div>;
 }
 
+/** Staff choice: what the customer website shows between heats. */
+function PublicViewChips({ core, update }: { core: L.Core; update: Update }) {
+    const v = L.publicViewOf(core);
+    const set = (pv: L.PublicView) => update(c => ({ ...c, settings: { ...c.settings, publicView: pv } }));
+    return <div className="field pv-field"><span className="flabel">מסך הלקוחות מציג</span>
+        <div className="chips" role="radiogroup" aria-label="מסך הלקוחות">
+            <button type="button" role="radio" aria-checked={v === 'heat'} className={`chip${v === 'heat' ? ' sel' : ''}`} onClick={() => set('heat')}>את המקצה</button>
+            <button type="button" role="radio" aria-checked={v === 'lineup'} className={`chip${v === 'lineup' ? ' sel' : ''}`} onClick={() => set('lineup')}>תור וקריאה למסלול</button>
+        </div>
+        <p className="meta">{v === 'heat' ? 'בזמן מקצה: זמנים חיים. בין מקצים: התוצאות של המקצה האחרון.' : 'בזמן מקצה: זמנים חיים. בין מקצים: התור והנהגים שנקראים למסלול.'}</p>
+    </div>;
+}
+
 /** The venue screen: switches by itself between lineup (call / next / empty) and live timing, with its own controls. */
 function TrackScreen({ core, now, onClose, act, ctlShown = true, setCtlShown = () => {} }: { core: L.Core; now: number; onClose: () => void; act?: MarshalActions; ctlShown?: boolean; setCtlShown?: (b: boolean) => void }) {
     const sc = L.screenState(core);
@@ -702,6 +715,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
                 </section>
 
                 <section className="mc-card" aria-label="מסך ותצוגה">
+                    <PublicViewChips core={core} update={update} />
                     <div className="mc-actions">
                         <Btn onClick={() => openScreen('track')}>פתח מסך תצוגה</Btn>
                         {lastRes && <Btn onClick={() => openScreen('last')}>{`תוצאה אחרונה · מקצה ${lastRes.heatNum}`}</Btn>}
@@ -1033,7 +1047,17 @@ export function PublicBoard() {
         <StaffShield />
     </div>;
     return <div className="dk pub">
-        <TrackScreen core={publicCore(board.core)} now={now} onClose={() => {}} />
+        {(() => {
+            const core = publicCore(board.core);
+            const last = hist[0];
+            // default: the customers see the heat. Between heats that is the latest results, not the queue.
+            if (L.publicViewOf(core) === 'heat' && !core.live && last) {
+                const called = L.calledHeat(core);
+                return <WallDisplay title={`תוצאות מקצה ${last.heatNum}`} sub={`${dayOf(last.at)} ${timeOf(last.at)}`} totalLaps={last.laps} state="done" rows={resultRowsOf(last)} onClose={() => {}}
+                    footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} />;
+            }
+            return <TrackScreen core={core} now={now} onClose={() => {}} />;
+        })()}
         <StaffShield />
         <button type="button" className="pub-hbtn" onClick={() => setShowHist(true)}>היסטוריית מקצים ({hist.length})</button>
         <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>

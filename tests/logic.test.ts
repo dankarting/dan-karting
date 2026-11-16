@@ -520,5 +520,12 @@ test('nameless quick start: heat created and on track at once; names can be adde
     assert.ok(L.quickStartHeat(on, 3, 1, 1).error, 'closed while the cashier add-on is on (payment gate)');
 });
 
+test('customer screen shows the heat by default; staff can switch to lineup', () => {
+    const c = L.initialCore();
+    assert.equal(L.publicViewOf(c), 'heat');
+    const l = { ...c, settings: { ...c.settings, publicView: 'lineup' as const } };
+    assert.equal(L.publicViewOf(l), 'lineup');
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
