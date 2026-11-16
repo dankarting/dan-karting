@@ -1,7 +1,8 @@
 // dk-bridge: reads lap passings from the AMB decoder at the track and sends them to the Dan Karting
 // app (Supabase) in real time. Runs from CMD on the track laptop. See docs/BRIDGE-HE.md.
 //
-//	dk-bridge              run (reads bridge.json next to the program)
+//	dk-bridge              run: finds the decoder by itself (COM or network), remembers it, sends laps
+//	dk-bridge install      once: start by itself with Windows + desktop icon, then run
 //	dk-bridge listen       show what the decoder sends, upload nothing (first test on site)
 //	dk-bridge ports        list COM ports
 //	dk-bridge find         look for a network decoder (TCP 5403 / 5100) on this laptop's network
@@ -19,7 +20,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,7 +28,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 type Config struct {
 	Connection    string  `json:"connection"` // auto | serial | tcp
@@ -41,7 +41,7 @@ type Config struct {
 	User          string  `json:"user"`
 	Password      string  `json:"password"`
 	RC2TimeUnitMs float64 `json:"rc2_time_unit_ms"`
-	RelayPort     int     `json:"relay_port"` // >0: re-serve the raw decoder stream on 127.0.0.1:<port>
+	RelayPort     int     `json:"relay_port"`  // >0: re-serve the raw decoder stream on 127.0.0.1:<port>
 	MinLapSec     float64 `json:"min_lap_sec"` // console display only; the app has its own setting
 }
 
@@ -109,6 +109,10 @@ func main() {
 		run(cfg, true)
 	case "listen":
 		run(cfg, false)
+	case "install":
+		install(cfg)
+	case "uninstall":
+		uninstall()
 	case "ports":
 		listPorts()
 	case "find":
@@ -136,43 +140,6 @@ func askPassword(cfg *Config) {
 }
 
 // ------------------------------------------------------------------ decoder connection
-
-// openSource connects to the decoder and returns a reader plus a description.
-func openSource(cfg Config, baud int) (io.ReadCloser, string, error) {
-	useTCP := cfg.Connection == "tcp" || (cfg.Connection == "auto" && cfg.DecoderHost != "")
-	if useTCP {
-		if cfg.DecoderHost == "" {
-			return nil, "", fmt.Errorf("decoder_host is empty in bridge.json (run: dk-bridge find)")
-		}
-		addr := net.JoinHostPort(cfg.DecoderHost, strconv.Itoa(cfg.DecoderPort))
-		c, err := net.DialTimeout("tcp", addr, 5*time.Second)
-		if err != nil {
-			return nil, "", err
-		}
-		return c, "tcp " + addr, nil
-	}
-	port := cfg.ComPort
-	if port == "" || strings.EqualFold(port, "auto") {
-		ports, err := serial.GetPortsList()
-		if err != nil || len(ports) == 0 {
-			return nil, "", fmt.Errorf("no COM port found. Is the decoder cable (USB/RS-232) plugged in?")
-		}
-		sort.Strings(ports)
-		port = ports[len(ports)-1] // USB adapters usually get the highest number
-		if len(ports) > 1 {
-			fmt.Printf("   COM ports: %s - trying %s (set com_port in bridge.json to choose)\n", strings.Join(ports, ", "), port)
-		}
-	}
-	p, err := serial.Open(port, &serial.Mode{BaudRate: baud, DataBits: 8, Parity: serial.NoParity, StopBits: serial.OneStopBit})
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "busy") || strings.Contains(strings.ToLower(err.Error()), "denied") {
-			return nil, "", fmt.Errorf("%s is in use by another program. Close the old timing program (the other CMD window) and try again", port)
-		}
-		return nil, "", fmt.Errorf("%s: %w", port, err)
-	}
-	_ = p.SetReadTimeout(time.Second)
-	return p, fmt.Sprintf("serial %s @ %d", port, baud), nil
-}
 
 var bauds = []int{9600, 19200, 38400, 57600, 115200}
 
@@ -237,20 +204,17 @@ func run(cfg Config, upload bool) {
 	}
 
 	clock := &ClockMap{}
-	baudIdx := 0
-	for attempt := 0; ; attempt++ {
-		baud := cfg.Baud
-		if baud == 0 {
-			baud = bauds[baudIdx%len(bauds)]
-		}
-		src, desc, err := openSource(cfg, baud)
+	for {
+		c, err := connect(&cfg)
 		if err != nil {
 			st.set(func() { st.Connected, st.Err = false, err.Error() })
-			fmt.Println("!! ", err, "- retrying in 5 s")
+			fmt.Println("!! ", err, "- trying again in 5 s")
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		src, desc := c.src, c.desc
 		fmt.Println("OK  connected to decoder:", desc)
+		fmt.Println("    Ready. Keep this window open. Laps go to the app live.")
 		st.set(func() { st.Connected, st.Source, st.Err = true, desc, "" })
 		parser := NewParser()
 		parser.RC2TimeUnitMs = cfg.RC2TimeUnitMs
@@ -264,25 +228,30 @@ func run(cfg Config, upload bool) {
 				fmt.Println("    ?", raw)
 			}
 		}
-		opened := time.Now()
-		buf := make([]byte, 4096)
 		recognised := false
+		process := func(b []byte) {
+			relay.send(b)
+			if capture != nil {
+				fmt.Fprintf(capture, "%s %x\n", time.Now().Format("15:04:05.000"), b)
+			}
+			arrived := time.Now().UnixMilli()
+			for _, p := range parser.Feed(b) {
+				handle(p, clock.Wall(p.DecoderMs, arrived), st, cloud, logDir, cfg)
+			}
+			if parser.Seen != "" && !recognised {
+				recognised = true
+				fmt.Println("OK  decoder format:", parser.Seen)
+				st.set(func() { st.Format = parser.Seen })
+			}
+		}
+		if len(c.first) > 0 {
+			process(c.first)
+		}
+		buf := make([]byte, 4096)
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
-				relay.send(buf[:n])
-				if capture != nil {
-					fmt.Fprintf(capture, "%s %x\n", time.Now().Format("15:04:05.000"), buf[:n])
-				}
-				arrived := time.Now().UnixMilli()
-				for _, p := range parser.Feed(buf[:n]) {
-					handle(p, clock.Wall(p.DecoderMs, arrived), st, cloud, logDir, cfg)
-				}
-				if parser.Seen != "" && !recognised {
-					recognised = true
-					fmt.Println("OK  decoder format:", parser.Seen)
-					st.set(func() { st.Format = parser.Seen })
-				}
+				process(buf[:n])
 			}
 			if err != nil && err != io.EOF {
 				fmt.Println("!!  decoder connection lost:", err)
@@ -290,12 +259,6 @@ func run(cfg Config, upload bool) {
 			}
 			if err == io.EOF && !strings.HasPrefix(desc, "serial") {
 				fmt.Println("!!  decoder closed the connection (another program may be connected to it)")
-				break
-			}
-			// serial with automatic speed: nothing recognisable after 4 s -> try the next speed
-			if cfg.Baud == 0 && strings.HasPrefix(desc, "serial") && !recognised && time.Since(opened) > 4*time.Second {
-				fmt.Printf("    no decoder data at %d baud, trying the next speed\n", baud)
-				baudIdx++
 				break
 			}
 		}
@@ -405,43 +368,19 @@ func listPorts() {
 	}
 }
 
-// find scans this laptop's local networks for a decoder port (5403 = P3, 5100 = legacy).
+// find lists COM ports and scans this laptop's local networks for a decoder port (5403 = P3, 5100 = legacy).
 func find(port int) {
+	listPorts()
 	ports := []int{port}
 	if port != 5100 {
 		ports = append(ports, 5100)
 	}
-	ifs, _ := net.InterfaceAddrs()
-	found := 0
-	for _, a := range ifs {
-		ipn, ok := a.(*net.IPNet)
-		if !ok || ipn.IP.To4() == nil || ipn.IP.IsLoopback() {
-			continue
-		}
-		base := ipn.IP.To4()
-		fmt.Printf("Scanning %d.%d.%d.1-254 (this laptop is %s) ...\n", base[0], base[1], base[2], base)
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		for i := 1; i < 255; i++ {
-			for _, pt := range ports {
-				wg.Add(1)
-				go func(ip string, pt int) {
-					defer wg.Done()
-					c, err := net.DialTimeout("tcp", net.JoinHostPort(ip, strconv.Itoa(pt)), 700*time.Millisecond)
-					if err == nil {
-						c.Close()
-						mu.Lock()
-						found++
-						fmt.Printf("FOUND  %s port %d   -> put \"decoder_host\": \"%s\", \"decoder_port\": %d in bridge.json\n", ip, pt, ip, pt)
-						mu.Unlock()
-					}
-				}(fmt.Sprintf("%d.%d.%d.%d", base[0], base[1], base[2], i), pt)
-			}
-		}
-		wg.Wait()
+	found := scanLAN(ports, true)
+	for _, a := range found {
+		fmt.Printf("FOUND  %s port %d\n", a.host, a.port)
 	}
-	if found == 0 {
-		fmt.Println("No network decoder found. If the decoder is connected with a serial/USB cable, leave decoder_host empty and run: dk-bridge ports")
+	if len(found) == 0 {
+		fmt.Println("No network decoder found. A serial/USB decoder is found by itself when the bridge starts.")
 	}
 }
 

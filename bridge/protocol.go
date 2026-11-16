@@ -49,8 +49,8 @@ type Parser struct {
 	buf           []byte
 	RC2TimeUnitMs float64
 	OnStatus      func(format, raw string) // heartbeat / status messages (optional)
-	OnUnknown     func(raw string)          // anything that did not parse (optional)
-	Seen          string                    // last format seen: "p3", "rc2", "ascii"
+	OnUnknown     func(raw string)         // anything that did not parse (optional)
+	Seen          string                   // last format seen: "p3", "rc2", "ascii"
 }
 
 func NewParser() *Parser { return &Parser{RC2TimeUnitMs: 1} }

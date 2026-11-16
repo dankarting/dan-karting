@@ -1007,11 +1007,20 @@ export function App() {
             setRecent(r => [p, ...r.filter(x => x.id !== p.id)].slice(0, 30));
             update(c => L.addPassings(c, [p]));
         });
-        const poll = () => void Cloud.fetchDecoderStatus().then(setDec);
+        return off;
+    }, [decoderOn]);
+    // Bridge heartbeat, read whenever staff is signed in. One step to go live: as soon as the bridge on the track
+    // laptop is connected to the decoder, a device that never chose a timing source switches to the decoder by itself.
+    useEffect(() => {
+        if (!ready || !session) return;
+        const poll = () => void Cloud.fetchDecoderStatus().then(d => {
+            setDec(d);
+            if (bridgeOk(d, Date.now()) && coreRef.current.settings.timingSource === undefined) update(c => ({ ...c, settings: { ...c.settings, timingSource: 'decoder' } }));
+        });
         poll();
         const i = setInterval(poll, 10_000);
-        return () => { off(); clearInterval(i); };
-    }, [decoderOn]);
+        return () => clearInterval(i);
+    }, [ready, session]);
     // catch up on crossings of the heat on track (page reloaded, or a gap in the live connection): every 15 s
     const liveStart = core.live?.source === 'decoder' ? core.live.startedAt ?? core.live.t0 : null;
     useEffect(() => {
