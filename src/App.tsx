@@ -402,52 +402,61 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
     return <span className={`tb-lights ${state}`} aria-label={state === 'live' ? 'מקצה פעיל' : 'ממתין'}>{[0, 1, 2, 3].map(i => <i key={i} />)}</span>;
 }
 
+const timingText = (ms: number | null) => {
+    if (ms == null) return '—';
+    const rounded = Math.round(ms);
+    const minutes = Math.floor(rounded / 60000);
+    const seconds = ((rounded % 60000) / 1000).toFixed(3);
+    return minutes ? `${minutes}:${seconds.padStart(6, '0')}` : seconds;
+};
+
+function TimingSummary({ rows, totalLaps }: { rows: BoardRow[]; totalLaps: number }) {
+    const fastest = rows.filter(r => r.best != null).reduce<BoardRow | null>((best, r) => !best || r.best! < best.best! ? r : best, null);
+    return <div className="timing-summary">
+        <div><small>נהגים</small><strong>{rows.length}</strong></div>
+        <div><small>התקדמות המוביל</small><strong>{rows[0]?.laps ?? 0}{totalLaps > 0 && <span> / {totalLaps}</span>}</strong></div>
+        <div className="fastest"><small>הקפה מהירה במקצה</small><strong><bdi>{timingText(fastest?.best ?? null)}</bdi></strong><span>{fastest ? `${fastest.label} · קרטינג ${fastest.kart}` : 'ממתינים להקפה ראשונה'}</span></div>
+        <div><small>סיימו</small><strong>{rows.filter(r => r.finished).length}<span> / {rows.length}</span></strong></div>
+    </div>;
+}
+
+function TimingTable({ rows, totalLaps, sectors = false }: { rows: BoardRow[]; totalLaps: number; sectors?: boolean }) {
+    return <div className="timing-table-wrap"><table className="timing-table">
+        <caption className="sr-only">דירוג לפי מספר הקפות, ולאחר מכן זמן מצטבר</caption>
+        <thead><tr><th scope="col">מיקום</th><th scope="col">קרטינג</th><th scope="col">נהג</th><th scope="col">הקפות</th><th scope="col">הקפה מהירה</th><th scope="col" className="timing-last">אחרונה</th><th scope="col">פער מהמוביל</th>{sectors && [1, 2, 3].map(n => <th scope="col" key={n}>S{n}</th>)}</tr></thead>
+        <tbody>{rows.map(r => <tr key={r.key} className={r.pos === 1 && r.laps > 0 ? 'timing-leader' : ''}>
+            <td className="timing-position">{r.pos}{r.gained ? <small className={r.gained > 0 ? 'gain' : 'loss'}>{r.gained > 0 ? '▲' : '▼'}{Math.abs(r.gained)}</small> : null}</td>
+            <td><span className="timing-kart">{r.kart}</span></td>
+            <th scope="row" className="timing-driver">{r.label}<small>{r.finished ? 'סיים ✓' : r.laps ? 'במסלול' : 'ממתין להקפה'}</small></th>
+            <td><bdi>{totalLaps > 0 ? `${r.laps}/${totalLaps}` : r.laps}</bdi></td>
+            <td className={r.isBest ? 'timing-fastest' : ''}><bdi>{timingText(r.best)}</bdi>{r.isBest && <small>הכי מהיר</small>}</td>
+            <td className={`timing-last${r.last != null && r.last === r.best ? ' timing-personal' : ''}`}><bdi>{timingText(r.last)}</bdi></td>
+            <td className="timing-gap">{r.laps === 0 ? '–' : r.pos === 1 ? 'מוביל' : <GapView g={r.gap} />}</td>
+            {sectors && [0, 1, 2].map(i => <td key={i} className={`tb-sec ${r.sectors?.[i]?.cls ?? ''}`}><bdi>{timingText(r.sectors?.[i]?.ms ?? null)}</bdi></td>)}
+        </tr>)}</tbody>
+    </table>{rows.length === 0 && <p className="empty">ממתינים לנהגים במקצה</p>}</div>;
+}
+
 function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; controls?: React.ReactNode; onClose: () => void }) {
     useEscape(p.onClose);
-    const [bodyRef, box] = useBox<HTMLDivElement>();
-    // Fit every row of the heat (up to 14+) into the space left under the header: row height and font follow it.
-    const n = Math.max(p.rows.length, 1);
-    const headRow = 22;
-    const rowGap = 3; // matches .tb-rows.fit gap: fixed-height rows must leave room for the gaps between them
-    const rawRowH = box.h ? (box.h - headRow - rowGap * n) / n : 0;
-    const fit = rawRowH >= 26;
-    // Rows shrink to fit a full heat but never grow past a sensible height when only a few karts are on track.
-    const vw = typeof window !== 'undefined' ? window.innerWidth : box.w;
-    const maxRow = vw < 600 ? 52 : vw < 1400 ? 64 : 84;
-    const rowH = Math.min(rawRowH, maxRow);
-    // Font follows the row height AND the narrowest time column (7.5vw on desktop), so a time like "12.179" stays on one line.
-    const colFs = vw >= 900 ? Math.floor((vw * 0.075) / 3.6) : 20;
-    const fs = fit ? Math.max(12, Math.min(34, colFs, Math.floor(rowH * 0.4))) : undefined;
-    const rowsStyle = fit ? ({ gridTemplateRows: `${headRow}px repeat(${n}, ${Math.floor(rowH)}px)`, alignContent: 'start', '--fs': `${fs}px` } as React.CSSProperties) : undefined;
+    const [showSectors, setShowSectors] = useState(false);
     return <div className="wall tboard" role="dialog" aria-label="לוח זמנים">
         <header className="tb-head">
             <Logo big />
             <Lights state={p.state} />
             <div className="tb-title"><div className="tb-heat">{p.title}</div><div className="tb-sub">{p.sub}</div></div>
             <div className="tb-clocks">
-                {p.countdown != null && <div className="tb-count" aria-label="זמן משוער שנותר"><small>נותר</small><bdi>{p.countdown}</bdi></div>}
+                {p.countdown != null && <div className="tb-count" aria-label="זמן משוער שנותר"><small>זמן שנותר</small><bdi>{p.countdown}</bdi></div>}
                 {p.clock && <div className="tb-elapsed"><small>זמן</small><bdi>{p.clock}</bdi></div>}
             </div>
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
         </header>
         {p.controls}
         <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>
-        <div className="tb-body" ref={bodyRef}>
-        <ol className={`tb-rows${fit ? ' fit' : ''}`} style={rowsStyle}>
-            <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>S1</span><span>S2</span><span>S3</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
-            {p.rows.map(r => <li key={r.key} className={`tb-row${r.pos === 1 ? ' lead' : ''}`}>
-                <span className="tb-pos">{r.pos}{r.gained ? <em className={r.gained > 0 ? 'up' : 'down'}>{r.gained > 0 ? `▲${r.gained}` : `▼${-r.gained}`}</em> : null}</span>
-                <span className="tb-kart">{r.kart}</span>
-                <span className={`tb-name${r.label.length > 14 ? ' long' : ''}`}>{r.label}</span>
-                {[0, 1, 2].map(i => <span key={i} className={`tb-sec ${r.sectors?.[i]?.cls ?? ''}`}><bdi>{r.sectors ? (r.sectors[i].ms / 1000).toFixed(3) : '–'}</bdi></span>)}
-                <span className="tb-last"><bdi>{L.fmt(r.last)}</bdi></span>
-                <span className={`tb-best${r.isBest ? ' ob' : ''}`}><bdi>{L.fmt(r.best)}</bdi></span>
-                <span className="tb-gap"><GapView g={r.gap} /></span>
-                <span className="tb-laps"><bdi dir="ltr">{p.totalLaps ? `${r.laps}/${p.totalLaps}` : r.laps}</bdi>{r.finished ? ' ✓' : ''}</span>
-            </li>)}
-        </ol>
-        </div>
-        <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה · <span className="pb">ירוק</span> שיא אישי · ▲▼ מקומות לעומת הזינוק</div>
+        <TimingSummary rows={p.rows} totalLaps={p.totalLaps} />
+        <div className="timing-toolbar"><span>דירוג: הקפות וזמן מצטבר</span><button type="button" className="timing-toggle" aria-pressed={showSectors} onClick={() => setShowSectors(!showSectors)}>{showSectors ? 'הסתר סקטורים' : 'הצג סקטורים מדומים'}</button></div>
+        <div className="timing-audience-body"><TimingTable rows={p.rows} totalLaps={p.totalLaps} sectors={showSectors} /></div>
+        <div className="tb-legend">סגול: ההקפה המהירה במקצה · ירוק: הקפה אחרונה השווה לשיא האישי · ▲▼ שינוי מהמיקום בהזנקה</div>
         {p.footer && <div className="call-next">{p.footer}</div>}
     </div>;
 }
@@ -642,20 +651,7 @@ function NameEditor({ core, heat, update, karts }: { core: L.Core; heat: L.Heat;
 }
 
 function MarshalTable({ rows, laps }: { rows: BoardRow[]; laps: number }) {
-    return <table className="mt">
-        <thead><tr><th>מק׳</th><th>קארט</th><th className="mt-name">נהג</th><th>הקפות</th><th>אחרונה</th><th>מהירה</th><th>פער</th></tr></thead>
-        <tbody>
-            {rows.map(r => <tr key={r.key} className={r.pos === 1 ? 'lead' : ''}>
-                <td className="mt-pos">{r.pos}</td>
-                <td><span className="mt-kart">{r.kart}</span></td>
-                <td className="mt-name">{r.label}</td>
-                <td className="mt-num"><bdi dir="ltr">{laps ? `${r.laps}/${laps}` : r.laps}</bdi>{r.finished ? ' ✓' : ''}</td>
-                <td className="mt-num"><bdi>{L.fmt(r.last)}</bdi></td>
-                <td className={`mt-num${r.isBest ? ' ob' : ''}`}><bdi>{L.fmt(r.best)}</bdi></td>
-                <td className="mt-num"><GapView g={r.gap} /></td>
-            </tr>)}
-        </tbody>
-    </table>;
+    return <><TimingSummary rows={rows} totalLaps={laps} /><TimingTable rows={rows} totalLaps={laps} /></>;
 }
 
 function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats }: LiveProps) {

@@ -589,3 +589,80 @@ body { background: #0b0b0c; }
 .mc-left { display: inline-flex; align-items: baseline; gap: 6px; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; color: #fff; }
 .mc-left small { font-size: 12px; font-weight: 600; color: #aaa; }
 .hl-field { margin-bottom: 10px; }
+
+/* Timing workspace: shared operator and audience table. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.timing-workspace { background-image: none; }
+.timing-summary { display: grid; grid-template-columns: 1fr 1.2fr 2fr 1fr; gap: 12px; margin: 16px 0; }
+.timing-summary > div { min-width: 0; padding: 16px; border: 1px solid #353039; border-radius: 12px; background: #18171d; display: flex; flex-direction: column; gap: 4px; }
+.timing-summary small { color: #bab5c2; font-size: 12px; }
+.timing-summary strong { font-size: 28px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.timing-summary strong span { font-size: 15px; color: #bab5c2; }
+.timing-summary .fastest { border-color: #7950a1; background: #24192e; }
+.timing-summary .fastest strong { color: #dab2ff; }
+.timing-summary .fastest > span { color: #d3c6df; font-size: 13px; overflow-wrap: anywhere; }
+.timing-table-wrap { width: 100%; overflow-x: auto; border: 1px solid #36313d; border-radius: 12px; background: #141318; }
+.timing-table { width: 100%; min-width: 620px; border-collapse: collapse; font-variant-numeric: tabular-nums; text-align: center; }
+.timing-table caption { text-align: start; }
+.timing-table thead { color: #bcb7c5; background: #201e26; }
+.timing-table th, .timing-table td { padding: 14px 12px; border-bottom: 1px solid #302c37; white-space: nowrap; }
+.timing-table thead th { font-size: 12px; font-weight: 600; }
+.timing-table tbody tr:last-child > * { border-bottom: 0; }
+.timing-table tbody tr:nth-child(even) { background: #1a181f; }
+.timing-table tbody tr.timing-leader { background: #292316; box-shadow: inset -3px 0 #ffd400; }
+.timing-table .timing-driver { text-align: start; white-space: normal; overflow-wrap: anywhere; min-width: 110px; max-width: 280px; }
+.timing-table small { display: block; font-size: 11px; margin-top: 4px; color: #bab5c2; font-weight: 500; }
+.timing-position { font-size: 22px; font-weight: 800; }
+.timing-table .gain { color: #58dfaa; } .timing-table .loss { color: #ff9298; }
+.timing-kart { display: inline-grid; place-items: center; min-width: 32px; height: 32px; border-radius: 8px; background: #39333f; color: #fff; font-weight: 800; }
+.timing-table .timing-fastest { color: #dab2ff; font-weight: 800; background: #9a50cb18; }
+.timing-table .timing-fastest small { color: #dab2ff; }
+.timing-personal { color: #58dfaa; }
+.timing-gap { color: #c8c1cf; font-size: 13px; }
+.timing-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #bcb7c5; font-size: 13px; margin: 0 20px 12px; }
+.timing-toggle { font: inherit; color: #ded7e8; border: 1px solid #51445e; background: #231d2b; padding: 10px 12px; border-radius: 8px; cursor: pointer; min-height: 44px; }
+.timing-toggle:focus-visible { outline: 2px solid #ffd400; outline-offset: 3px; }
+.timing-toggle[aria-pressed=true] { border-color: #c77dff; }
+.timing-confirm { margin-top: 16px; padding: 16px; background: #301b20; border: 1px solid #b85868; border-radius: 10px; }
+.timing-confirm p { color: #e8c6ce; font-size: 14px; }
+.wall.tboard { background: #0e0d12; padding-bottom: 48px; }
+.tboard .tb-head { background: #19151c; border-top: 4px solid #e3262b; box-shadow: 0 1px #463441; flex-wrap: wrap; }
+.tboard .timing-summary { margin: 16px 20px; }
+.tboard .timing-table-wrap { width: auto; margin: 0 20px; flex-shrink: 0; }
+.tboard .timing-table { font-size: clamp(15px, 1.65vw, 29px); }
+.tboard .timing-table thead th { font-size: clamp(11px, 1vw, 17px); }
+.tboard .tb-elapsed { display: block; }
+.tboard .tb-lights i { box-shadow: none; }
+.pub-conn.ok { color: #58dfaa; }
+@media (min-width: 1000px) {
+  .dk.timing-workspace { padding-inline: max(24px, calc((100% - 1320px) / 2)); }
+  .timing-workspace .queue { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+}
+@media (max-width: 650px) {
+  .timing-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .timing-summary > div { padding: 12px; }
+  .timing-summary strong { font-size: 23px; }
+  .timing-table { min-width: 510px; }
+  .timing-table th, .timing-table td { padding: 12px 8px; }
+  .timing-table .timing-last { display: none; }
+  .timing-toolbar { align-items: flex-start; }
+  .tboard .timing-summary { margin: 12px; }
+  .tboard .timing-table-wrap { margin: 0 12px; }
+  .tboard .tb-head .tb-lights { display: none; }
+  .tboard .tb-clocks { gap: 10px; }
+  .tboard .tb-elapsed bdi { font-size: 16px; }
+  .tboard .tb-clocks small { font-size: 10px; }
+}
+
+/* Preserve the current marshal controls and fit long audience lists. */
+.tboard .timing-audience-body { flex: 1; min-height: 120px; overflow: auto; }
+.tboard .timing-audience-body .timing-table-wrap { overflow: auto; }
+.tboard .timing-table td, .tboard .timing-table th { padding-block: clamp(6px, 1.1vh, 14px); }
+.mc-main .timing-summary { margin: 12px; }
+.mc-main .timing-table-wrap { border-radius: 0; border-inline: 0; }
+@media (max-height: 760px) and (min-width: 900px) {
+  .tboard .timing-summary > div { padding: 8px 12px; }
+  .tboard .timing-summary strong { font-size: 23px; }
+  .tboard .tb-head { padding-block: 8px; }
+  .tboard .timing-summary { margin-block: 10px; }
+}
