@@ -56,13 +56,14 @@ export type Settings = {
     /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
     transponders?: Record<string, string>;
     /**
-     * What the public (customer) website shows. 'heat' (default): always the heat — live timing while a heat
-     * runs, otherwise the latest results. 'lineup': between heats it shows the queue / call-up screen.
+     * What the public (customer) website shows. Both show live timing while a heat runs (also a quick start
+     * without a queue). 'lineup' (default): between heats the queue / call-up waiting screen.
+     * 'heat': between heats the latest results.
      */
     publicView?: PublicView;
 };
 export type PublicView = 'heat' | 'lineup';
-export const publicViewOf = (core: Core): PublicView => core.settings.publicView ?? 'heat';
+export const publicViewOf = (core: Core): PublicView => core.settings.publicView ?? 'lineup';
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** pausedAt: set while a marshal has stopped the heat ("עצור"); the clock and simulated laps freeze. */

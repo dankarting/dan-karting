@@ -556,10 +556,10 @@ function BroadcastChip({ session, on, status, enable, openSettings }: { session:
 function PublicViewChips({ core, update }: { core: L.Core; update: Update }) {
     const v = L.publicViewOf(core);
     const set = (pv: L.PublicView) => update(c => ({ ...c, settings: { ...c.settings, publicView: pv } }));
-    return <div className="field pv-field"><span className="flabel">מסך הלקוחות מציג</span>
+    return <div className="field pv-field"><span className="flabel">מסך הלקוחות בין מקצים</span>
         <div className="chips" role="radiogroup" aria-label="מסך הלקוחות">
-            <button type="button" role="radio" aria-checked={v === 'heat'} className={`chip${v === 'heat' ? ' sel' : ''}`} onClick={() => set('heat')}>את המקצה</button>
             <button type="button" role="radio" aria-checked={v === 'lineup'} className={`chip${v === 'lineup' ? ' sel' : ''}`} onClick={() => set('lineup')}>תור וקריאה למסלול</button>
+            <button type="button" role="radio" aria-checked={v === 'heat'} className={`chip${v === 'heat' ? ' sel' : ''}`} onClick={() => set('heat')}>תוצאות אחרונות</button>
         </div>
         <p className="meta">{v === 'heat' ? 'בזמן מקצה: זמנים חיים. בין מקצים: התוצאות של המקצה האחרון.' : 'בזמן מקצה: זמנים חיים. בין מקצים: התור והנהגים שנקראים למסלול.'}</p>
     </div>;
