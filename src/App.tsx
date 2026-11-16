@@ -879,7 +879,7 @@ export function App() {
     // Public website: staff session + "broadcast" switch (per device). Publishes the board on every change.
     const [session, setSession] = useState<Session | null>(null);
     useEffect(() => Cloud.onSession(setSession), []);
-    const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v1', true);
+    const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v2', true);
     const [pubStatus, setPubStatus] = useState('');
     const sending = ready && !!session && broadcast;
     useEffect(() => {
@@ -981,7 +981,9 @@ export function App() {
                     {core.live && <button type="button" className={`onair${L.isPaused(core) ? ' paused' : ''}`} onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} {L.isPaused(core) ? 'עצור' : 'על המסלול'}</button>}
                     <span className="sim-badge" title="אין חיבור לשעון ההקפות, לשרת או למסכים של המסלול">סימולציה</span>
                     {cashier && <span className="addon-badge">תוסף קופה</span>}
-                    {sending && <span className="onair-tag">● משדר לאתר</span>}
+                    {sending && !pubStatus.startsWith('השידור נכשל') && <span className="onair-tag">● משדר לאתר</span>}
+                    {sending && pubStatus.startsWith('השידור נכשל') && <button type="button" className="onair-tag bad" title={pubStatus} onClick={() => setTab('settings')}>⚠ השידור לאתר נכשל</button>}
+                    {ready && session && !broadcast && <button type="button" className="onair-tag off" onClick={() => setBroadcast(true)}>○ לא משדר לאתר · הפעל</button>}
                 </div>
             </header>
             <nav className="tabs" aria-label="מסכים" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
