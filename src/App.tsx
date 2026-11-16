@@ -474,15 +474,16 @@ function CallDisplay(p: { core: L.Core; state: 'call' | 'next' | 'empty'; heat?:
     return <div className={`wall callwall ${p.state}`} role="dialog" aria-label="מסך קריאה למסלול">
         <header className="lu-head">
             <Logo big />
-            <div className="lu-banner"><span>{p.state === 'call' ? 'נקראים למסלול' : p.state === 'next' ? 'הבא בתור' : 'אין מקצים בתור'}</span>{p.heat && <b>מקצה {p.heat.num}</b>}</div>
+            <div className="lu-banner" key={`${p.state}-${p.heat?.id ?? ''}`}><span>{p.state === 'call' ? 'נקראים למסלול' : p.state === 'next' ? 'הבא בתור' : 'אין מקצים בתור'}</span>{p.heat && <b>מקצה {p.heat.num}</b>}</div>
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
         </header>
         <div className="lu-sub">{p.heat ? `${ds.length} נהגים${p.state === 'call' ? ' · לגשת לאזור ההמתנה, לפי מספר הקארט' : ' · עוד לא נקרא, להתכונן'}` : waiting ? `${waiting} קבוצות ממתינות לשיבוץ בקופה` : 'ממתינים לקבוצות'}</div>
         <div className="wall-sim">סימולציה · שמות ותמונות זמניים לדוגמה · לא חיבור למסלול</div>
-        {p.heat && <ul className={`lu-grid${ds.length > 10 ? ' many' : ''}`}>
-            {ds.map(d => {
+        {p.state === 'call' && <div className="lu-flag" aria-hidden="true" />}
+        {p.heat && <ul key={`${p.state}-${p.heat.id}`} className={`lu-grid${ds.length > 10 ? ' many' : ''}`}>
+            {ds.map((d, i) => {
                 const hide = staff && !d.kartSet;
-                return <li key={d.key} className="lu-card">
+                return <li key={d.key} className="lu-card" style={{ '--i': i } as React.CSSProperties}>
                     <div className="lu-photo"><Avatar kart={d.kart} label={d.label} /><span className={`lu-kart${hide ? ' tbd' : ''}`}>{hide ? '?' : d.kart}</span></div>
                     <div className="lu-name">{d.label}</div>
                     {hide ? <div className="lu-note">הצוות יקצה קארט</div> : !d.kartSet && <div className="lu-note">קארט מוצע</div>}
