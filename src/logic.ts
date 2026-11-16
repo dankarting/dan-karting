@@ -43,6 +43,8 @@ export type Settings = {
     laps: number; // legacy lap-limited runs only; heats are now timed (heatMinutes)
     /** Heat duration in minutes. 10 is the minimum (owner); 20 is the other common option. Default 10. */
     heatMinutes?: number;
+    /** When the "current" heat history starts over: every night at 00:00 (day) or Saturday night -> Sunday 00:00 (week). The archive keeps everything. */
+    histReset?: HistReset;
     tickets: string[];
     /** Ticket types that ride the FAST karts (owner: ליגה, מאסטר). They never share a heat with regular karts, unless family. */
     fastTickets?: string[];
@@ -764,7 +766,25 @@ export function resultOf(core: Core, heat: Heat, timing: DriverTiming[], now: nu
 }
 
 /** Keep history under the per-key storage budget (16 KiB), dropping the oldest. */
-export function trimHistory(h: Result[], maxBytes = 14000): Result[] {
+export type HistReset = 'day' | 'week';
+export const histResetOf = (core: Core): HistReset => core.settings.histReset ?? 'day';
+/** Start of the current history period, local time: today 00:00, or the last Sunday 00:00 (the Israeli week starts on Sunday). */
+export function periodStart(now: number, mode: HistReset): number {
+    const d = new Date(now); d.setHours(0, 0, 0, 0);
+    if (mode === 'week') d.setDate(d.getDate() - d.getDay());
+    return d.getTime();
+}
+export const currentPeriod = (hist: Result[], now: number, mode: HistReset) => { const t = periodStart(now, mode); return hist.filter(r => r.at >= t); };
+/** Same heat result seen twice (local + cloud archive) has the same key. */
+export const resultKey = (r: Result) => `${r.heatId}-${r.at}`;
+export function mergeResults(...lists: Result[][]): Result[] {
+    const m = new Map<string, Result>();
+    for (const l of lists) for (const r of l) if (!m.has(resultKey(r))) m.set(resultKey(r), r);
+    return [...m.values()].sort((a, b) => b.at - a.at);
+}
+
+/** Device copy of the history (the full archive lives in the cloud). ~2 MB keeps months of heats in browser storage. */
+export function trimHistory(h: Result[], maxBytes = 2_000_000): Result[] {
     let out = h;
     while (out.length > 1 && JSON.stringify(out).length > maxBytes) out = out.slice(0, -1);
     return out;

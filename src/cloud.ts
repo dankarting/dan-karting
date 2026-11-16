@@ -19,7 +19,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 /** hist: finished heats (newest first) for the public history view. */
 export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[] };
 
-export const PUBLIC_HISTORY = 30;
+export const PUBLIC_HISTORY = 150;
 export function boardOf(core: L.Core, now: number, hist: L.Result[] = []): BoardPayload {
     const { submissions: _unpaid, ...rest } = core;
     return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY) };
@@ -52,6 +52,22 @@ export function subscribeBoard(cb: (p: BoardPayload) => void, onStatus?: (s: str
 function isPayload(x: unknown): x is BoardPayload {
     const p = x as BoardPayload | null;
     return !!p && typeof p === 'object' && !!p.core && Array.isArray(p.core.heats) && typeof p.sentAt === 'number';
+}
+
+// Permanent archive: one row per finished heat in public.heat_history (anyone reads, signed-in staff insert).
+const ARCHIVE = 'heat_history';
+/** Saves finished heats to the archive. Already-saved heats are skipped. Returns an error message or null. */
+export async function archiveHeats(rs: L.Result[]): Promise<string | null> {
+    if (rs.length === 0) return null;
+    const rows = rs.map(r => ({ id: `${r.heatId}-${r.at}`, at: new Date(r.at).toISOString(), data: r }));
+    const { error } = await supabase.from(ARCHIVE).upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+    return error ? error.message : null;
+}
+/** Newest archived heats first. */
+export async function fetchArchive(limit = 2000): Promise<L.Result[] | null> {
+    const { data, error } = await supabase.from(ARCHIVE).select('data').order('at', { ascending: false }).limit(limit);
+    if (error || !data) return null;
+    return data.map(d => d.data as L.Result).filter(r => r && Array.isArray(r.rows));
 }
 
 /** Staff sign in with a short user name (e.g. "admin"); Supabase needs an e-mail, so a name maps to <name>@dankarting.app.

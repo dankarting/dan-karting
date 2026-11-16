@@ -673,6 +673,35 @@ function History({ hist, pub }: { hist: L.Result[]; pub?: boolean }) {
     </Group>;
 }
 
+/** Staff history: the current period (resets at midnight or end of week) and the full archive from the cloud. */
+function HistoryTab({ core, update, hist, now }: { core: L.Core; update: Update; hist: L.Result[]; now: number }) {
+    const mode = L.histResetOf(core);
+    const [view, setView] = useState<'now' | 'all'>('now');
+    const [arch, setArch] = useState<L.Result[] | null>(null);
+    const [err, setErr] = useState('');
+    useEffect(() => { if (view === 'all') { setErr(''); void Cloud.fetchArchive().then(r => { if (r) setArch(r); else setErr('אין חיבור לארכיון בענן. מוצג מה שנשמר במכשיר הזה.'); }); } }, [view]);
+    const cur = L.currentPeriod(hist, now, mode);
+    const all = L.mergeResults(arch ?? [], hist);
+    const since = new Date(L.periodStart(now, mode)).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' });
+    return <>
+        <div className="row-actions">
+            <div className="chips" role="radiogroup" aria-label="תצוגת היסטוריה">
+                <button type="button" role="radio" aria-checked={view === 'now'} className={`chip${view === 'now' ? ' sel' : ''}`} onClick={() => setView('now')}>{mode === 'day' ? 'היום' : 'השבוע'} ({cur.length})</button>
+                <button type="button" role="radio" aria-checked={view === 'all'} className={`chip${view === 'all' ? ' sel' : ''}`} onClick={() => setView('all')}>ארכיון מלא</button>
+            </div>
+        </div>
+        <p className="meta">{view === 'now' ? `מקצים מאז ${since} 00:00. התצוגה הזו (וגם באתר הציבורי) מתחילה מחדש ${mode === 'day' ? 'כל לילה ב-12' : 'כל מוצאי שבת ב-12 בלילה'}. שום דבר לא נמחק: הכול נשמר בארכיון.` : `כל המקצים שנשמרו בענן${arch ? ` (${all.length})` : '…'}.`}</p>
+        {err && <p className="err">{err}</p>}
+        <div className="field"><span className="flabel">איפוס התצוגה</span>
+            <div className="chips" role="radiogroup" aria-label="איפוס התצוגה">
+                {([['day', 'כל לילה ב-12'], ['week', 'כל סוף שבוע']] as [L.HistReset, string][]).map(([k, t]) => <button key={k} type="button" role="radio" aria-checked={mode === k} className={`chip sm${mode === k ? ' sel' : ''}`} onClick={() => update(c => ({ ...c, settings: { ...c.settings, histReset: k } }))}>{t}</button>)}
+            </div>
+        </div>
+        <History hist={view === 'now' ? cur : all} />
+        {view === 'all' && all.length > 0 && <div className="row-actions"><CopyButton text={JSON.stringify(all, null, 1)} label="העתק את כל הארכיון (JSON)" /></div>}
+    </>;
+}
+
 // ----------------------------------------------------------------- settings
 /** Staff sign-in for the public timing website. While signed in and switched on, this device publishes the board. */
 function PublicSite({ session, on, setOn, status }: { session: Session | null; on: boolean; setOn: (b: boolean) => void; status: string }) {
@@ -773,13 +802,16 @@ export function App() {
     const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v1', true);
     const [pubStatus, setPubStatus] = useState('');
     const sending = ready && !!session && broadcast;
+    const periodKey = L.periodStart(now, L.histResetOf(core));
     useEffect(() => {
         if (!sending) { setPubStatus(''); return; }
         const t = setTimeout(() => {
-            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), hist)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
+            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), L.currentPeriod(hist, Date.now(), L.histResetOf(core)))).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
         }, 300);
         return () => clearTimeout(t);
-    }, [sending, core, hist]);
+    }, [sending, core, hist, periodKey]);
+    // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
+    useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Latest state for timers and chained edits: every change goes through update(fn) on the newest core.
     const coreRef = useRef(core); coreRef.current = core;
@@ -798,7 +830,7 @@ export function App() {
     const start = (id: string) => update(c => L.startHeat(c, id, Date.now(), Date.now() % 100000, autoRef.current ? DEMO.speed : 5));
     const save = () => {
         const { core: next, result } = L.finishRun(coreRef.current, Date.now());
-        if (result) setHist(L.trimHistory([result, ...histRef.current]));
+        if (result) { setHist(L.trimHistory([result, ...histRef.current])); void Cloud.archiveHeats([result]); }
         update(() => next);
     };
     const setAuto = (b: boolean) => { autoRef.current = b; phase.current = { key: '', since: 0 }; setAutoRaw(b); };
@@ -857,7 +889,7 @@ export function App() {
             {ready && tab === 'cashier' && <Cashier core={core} update={update} goHeats={goHeats} />}
             {ready && tab === 'heats' && <Heats core={core} update={update} />}
             {ready && tab === 'live' && <Live core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} save={save} start={start} cancel={cancel} goHeats={goHeats} />}
-            {ready && tab === 'history' && <History hist={hist} />}
+            {ready && tab === 'history' && <HistoryTab core={core} update={update} hist={hist} now={now} />}
             {ready && tab === 'settings' && <Settings site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); setHist([]); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
             {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} />}

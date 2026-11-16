@@ -25,6 +25,13 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 - Public heat history: staff device publishes the last 30 finished heats (BoardPayload.hist); the public page has a
   "היסטוריית מקצים" button (read-only list, search by name).
 
+## Heat history: permanent archive + daily/weekly reset (owner, 2026-11-16)
+- Every finished heat is inserted into Supabase table public.heat_history (docs/heat-history.sql; anon read, staff insert only).
+  The staff device also back-fills its local history to the archive whenever a staff session starts.
+- "Current" history (History tab + public site) restarts at local midnight (settings.histReset 'day', default) or
+  Saturday night -> Sunday 00:00 ('week'). Nothing is deleted; History tab has "ארכיון מלא" (cloud + device, merged).
+- Device copy of history is capped at ~2 MB (was 14 KB).
+
 ## Timed heats + manual start (owner, 2026-11-15)
 - Heat length: Settings.heatMinutes, default 10, minimum 10, chips 10/20, stepper up to 30. Fixed into live.durationMs at start.
 - When time is up each driver finishes the lap in progress, then is done (timedTiming). Board countdown = real time left.

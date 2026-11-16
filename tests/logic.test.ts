@@ -468,3 +468,14 @@ test('fast + regular in one heat is allowed with shift manager (אחמ״ש) appr
     c = { ...c, heats: [{ ...h(), entries: [...h().entries, { groupId: d.id, count: 1 }] }] };
     assert.equal(L.canApprove(c, h()), false, 'approval covers only the groups that were there');
 });
+
+test('history period: resets at local midnight (day) or Saturday night (week); archive merge keeps one copy', () => {
+    const wed = new Date(2026, 10, 18, 15, 30).getTime(); // Wednesday
+    assert.equal(L.periodStart(wed, 'day'), new Date(2026, 10, 18).getTime());
+    assert.equal(L.periodStart(wed, 'week'), new Date(2026, 10, 15).getTime(), 'Sunday 00:00');
+    const r = (at: number, id = 'h'): L.Result => ({ heatId: id, heatNum: 1, at, simulated: true, laps: 0, rows: [] });
+    const hist = [r(wed), r(new Date(2026, 10, 17, 22).getTime()), r(new Date(2026, 10, 14, 23).getTime())];
+    assert.equal(L.currentPeriod(hist, wed, 'day').length, 1);
+    assert.equal(L.currentPeriod(hist, wed, 'week').length, 2);
+    assert.equal(L.mergeResults(hist, [r(wed)], [r(wed + 1, 'x')]).length, 4);
+});
