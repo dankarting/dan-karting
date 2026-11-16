@@ -586,3 +586,6 @@ body { background: #0b0b0c; }
 .onair-tag.off { background: #3a3000; color: #ffd84a; border: 1px solid #c9a400; cursor: pointer; font: inherit; font-size: 12px; }
 .pv-field { margin-bottom: 12px; }
 .pub .wall .call-next { padding-inline-start: 56px; }
+.mc-left { display: inline-flex; align-items: baseline; gap: 6px; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; color: #fff; }
+.mc-left small { font-size: 12px; font-weight: 600; color: #aaa; }
+.hl-field { margin-bottom: 10px; }

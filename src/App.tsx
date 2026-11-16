@@ -443,7 +443,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
                 <span className="tb-last"><bdi>{L.fmt(r.last)}</bdi></span>
                 <span className={`tb-best${r.isBest ? ' ob' : ''}`}><bdi>{L.fmt(r.best)}</bdi></span>
                 <span className="tb-gap"><GapView g={r.gap} /></span>
-                <span className="tb-laps"><bdi dir="ltr">{r.laps}/{p.totalLaps}</bdi>{r.finished ? ' ✓' : ''}</span>
+                <span className="tb-laps"><bdi dir="ltr">{p.totalLaps ? `${r.laps}/${p.totalLaps}` : r.laps}</bdi>{r.finished ? ' ✓' : ''}</span>
             </li>)}
         </ol>
         </div>
@@ -517,7 +517,7 @@ function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
 
 function resultRowsOf(r: L.Result): BoardRow[] {
     const bAll = Math.min(...r.rows.map(x => x.best ?? Infinity));
-    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: gapOf(x.laps.length, x.total, r.rows[0].laps.length, r.rows[0].total, i === 0), finished: x.laps.length >= r.laps, isBest: x.best != null && x.best === bAll, sectors: null, gained: null }));
+    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: gapOf(x.laps.length, x.total, r.rows[0].laps.length, r.rows[0].total, i === 0), finished: r.laps ? x.laps.length >= r.laps : true, isBest: x.best != null && x.best === bAll, sectors: null, gained: null }));
 }
 
 const mmss = (ms: number) => { const s = Math.ceil(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
@@ -552,6 +552,18 @@ function BroadcastChip({ session, on, status, enable, openSettings }: { session:
     return <span className="onair-tag" title={status}>● משדר לאתר</span>;
 }
 
+/** Heat length: 10 or 20 minutes (10 is the minimum). Applies to the next heat that starts. */
+function HeatLength({ core, update }: { core: L.Core; update: Update }) {
+    const m = L.heatMinutesOf(core);
+    const runMin = core.live?.durationMs ? Math.round(core.live.durationMs / 60_000) : null;
+    return <div className="field hl-field"><span className="flabel">זמן מקצה</span>
+        <div className="chips" role="radiogroup" aria-label="זמן מקצה">
+            {L.HEAT_MINUTES.map(v => <button key={v} type="button" role="radio" aria-checked={m === v} className={`chip${m === v ? ' sel' : ''}`} onClick={() => update(c => ({ ...c, settings: { ...c.settings, heatMinutes: v } }))}>{v} דקות</button>)}
+        </div>
+        {runMin != null && runMin !== m && <p className="meta">המקצה שעל המסלול נשאר {runMin} דקות. השינוי חל מהמקצה הבא.</p>}
+    </div>;
+}
+
 /** Staff choice: what the customer website shows between heats. */
 function PublicViewChips({ core, update }: { core: L.Core; update: Update }) {
     const v = L.publicViewOf(core);
@@ -576,8 +588,8 @@ function TrackScreen({ core, now, onClose, act, ctlShown = true, setCtlShown = (
         const called = L.calledHeat(core);
         const el = L.elapsedOf(core.live, now);
         const paused = L.isPaused(core);
-        return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={done ? 'הסתיים · תוצאות' : paused ? 'המקצה עצור' : 'על המסלול · בלייב'} totalLaps={core.settings.laps} state={done ? 'done' : paused ? 'wait' : 'live'}
-            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose}
+        return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={done ? 'הסתיים · תוצאות' : paused ? 'המקצה עצור' : 'על המסלול · בלייב'} totalLaps={L.lapTargetOf(core)} state={done ? 'done' : paused ? 'wait' : 'live'}
+            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(L.remainingOf(core, timing, now))} rows={liveRowsOf(core, timing)} onClose={onClose}
             footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} controls={controls} />;
     }
     return <CallDisplay core={core} state={sc.state === 'race' ? 'empty' : sc.state} heat={sc.heat} onClose={onClose} controls={controls} />;
@@ -637,7 +649,7 @@ function MarshalTable({ rows, laps }: { rows: BoardRow[]; laps: number }) {
                 <td className="mt-pos">{r.pos}</td>
                 <td><span className="mt-kart">{r.kart}</span></td>
                 <td className="mt-name">{r.label}</td>
-                <td className="mt-num"><bdi dir="ltr">{r.laps}/{laps}</bdi>{r.finished ? ' ✓' : ''}</td>
+                <td className="mt-num"><bdi dir="ltr">{laps ? `${r.laps}/${laps}` : r.laps}</bdi>{r.finished ? ' ✓' : ''}</td>
                 <td className="mt-num"><bdi>{L.fmt(r.last)}</bdi></td>
                 <td className={`mt-num${r.isBest ? ' ob' : ''}`}><bdi>{L.fmt(r.best)}</bdi></td>
                 <td className="mt-num"><GapView g={r.gap} /></td>
@@ -676,6 +688,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
                 <span className={`mc-state ${ms.state}`}>{STATE_LABEL[ms.state]}</span>
                 <span className="mc-heat">{shownHeat ? `מקצה ${shownHeat.num}` : 'אין מקצה'}<small>{shownHeat ? ` · ${L.heatCount(shownHeat)} נהגים` : ''}</small></span>
                 <span className="mc-clock" aria-label="זמן מקצה"><bdi>{clock}</bdi></span>
+                {heat && core.live?.durationMs ? <span className="mc-left" aria-label="זמן שנותר"><small>נותר</small><bdi>{mmss(L.remainingOf(core, timing, now))}</bdi></span> : null}
             </div>
             <div className="mc-btns">
                 <button type="button" className="mc-btn go" disabled={!mb.canStart} onClick={act.startOrResume}><span aria-hidden="true">▶</span>{mb.startLabel}</button>
@@ -692,7 +705,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
                     {heat && <button type="button" className="kb sm" aria-pressed={editNames} onClick={() => setEditNames(!editNames)}>{editNames ? 'סגור עריכת שמות' : 'ערוך שמות'}</button>}
                     <span className="mc-sim">זמנים מדומים</span>
                 </header>
-                {heat && !editNames && <MarshalTable rows={rows} laps={core.settings.laps} />}
+                {heat && !editNames && <MarshalTable rows={rows} laps={L.lapTargetOf(core)} />}
                 {heat && editNames && <><p className="meta">שמות בלבד בזמן מקצה. הקארטים נעולים עד הסוף.</p><NameEditor core={core} heat={heat} update={update} karts={false} /></>}
                 {!heat && ms.target && <><p className="meta">אפשר להקליד שמות, להשאיר ריק ולהתחיל בלי שמות, או להשלים שמות תוך כדי מקצה.</p><NameEditor core={core} heat={ms.target} update={update} karts /></>}
                 {!heat && !ms.target && <div className="empty"><p>{cashier ? 'אין מקצה מאושר בתור. מקצים נבנים מקבוצות ששילמו (לשוניות קופה ומקצים).' : 'אין מקצה בתור. התחל מקצה מהיר בלי שמות, או הוסף מקצה לתור.'}</p>{cashier && <Btn small onClick={goHeats}>למקצים</Btn>}</div>}
@@ -701,6 +714,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
             <aside className="mc-side">
                 {!cashier ? <section className="mc-card" aria-label="מקצה מהיר">
                     <header className="mc-card-h"><h2>מקצה מהיר</h2></header>
+                    <HeatLength core={core} update={update} />
                     <Stepper label="כמה נהגים" value={n} min={1} max={core.settings.capacity} onChange={v => { setQn(v); setQMsg(''); }} />
                     <div className="mc-actions">
                         <Btn kind="primary" disabled={!!heat} onClick={() => setQMsg(act.quickStart(n) ?? 'המקצה התחיל בלי שמות. אפשר להוסיף שמות ב"ערוך שמות".')}>התחל עכשיו בלי שמות</Btn>
@@ -778,7 +792,7 @@ function History({ hist }: { hist: L.Result[] }) {
                                 <td className="mt-pos">{x.pos}</td>
                                 <td><span className="mt-kart">{x.kart}</span></td>
                                 <td className="mt-name">{x.label}</td>
-                                <td className="mt-num"><bdi dir="ltr">{x.laps.length}/{r.laps}</bdi></td>
+                                <td className="mt-num"><bdi dir="ltr">{r.laps ? `${x.laps.length}/${r.laps}` : x.laps.length}</bdi></td>
                                 <td className={`mt-num${x.best != null && x.best === bAll ? ' ob' : ''}`}><bdi>{L.fmt(x.best)}</bdi></td>
                                 <td className="mt-num"><bdi>{L.fmt(x.total)}</bdi></td>
                             </tr>)}</tbody>
@@ -843,7 +857,8 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
             </div>
             <Stepper label="או ערך אחר" value={s.capacity} min={L.MIN_CAP} max={L.MAX_CAP} onChange={n => upd({ capacity: n })} />
             <p className="meta">פתוח: הוזכרו 10 וגם 14, הערך הנכון לא אושר. ברירת המחדל 10. אחרי שינוי לחץ "שבץ מחדש" בלשונית מקצים.{overDraft > 0 ? ` ${overDraft} טיוטות חורגות עכשיו.` : ''}{overQueued > 0 ? ` ${overQueued} מקצים בתור חורגים ולא יעלו למסלול עד שיתוקנו.` : ''}</p>
-            <Stepper label="הקפות במקצה (בסימולציה)" value={s.laps} min={2} max={20} onChange={n => upd({ laps: n })} />
+            <HeatLength core={core} update={update} />
+            <p className="meta">המקצה רץ לפי זמן: כשהזמן נגמר כל נהג משלים את ההקפה שהוא בה ומסיים. מינימום 10 דקות. ההקפות מדומות.</p>
             <div className="field"><span className="flabel">מי קובע קארט לנהג</span>
                 <div className="chips" role="radiogroup" aria-label="שיוך קארט">
                     {([['unset', 'עוד לא הוחלט (הצעה, אפשר לערוך)'], ['cashier', 'נבחר מראש עם השמות'], ['staff', 'הצוות מקצה בעלייה']] as [L.KartMode, string][]).map(([k, label]) => <button key={k} type="button" role="radio" aria-checked={L.kartMode(core) === k} className={`chip${L.kartMode(core) === k ? ' sel' : ''}`} onClick={() => upd({ kartMode: k })}>{label}</button>)}

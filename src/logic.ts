@@ -61,13 +61,20 @@ export type Settings = {
      * 'heat': between heats the latest results.
      */
     publicView?: PublicView;
+    /** Heat length in minutes (timed heats). Options 10 / 20; 10 is the minimum. Default 10. */
+    heatMinutes?: number;
 };
+export const HEAT_MINUTES = [10, 20] as const;
+export const MIN_HEAT_MINUTES = 10;
+export const heatMinutesOf = (core: Core): number => Math.max(MIN_HEAT_MINUTES, Math.round(core.settings.heatMinutes ?? MIN_HEAT_MINUTES));
 export type PublicView = 'heat' | 'lineup';
 export const publicViewOf = (core: Core): PublicView => core.settings.publicView ?? 'lineup';
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** pausedAt: set while a marshal has stopped the heat ("עצור"); the clock and simulated laps freeze. */
-export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; pausedAt?: number };
+/** durationMs: a timed heat (the clock runs down; every driver finishes the lap in progress when time is up).
+ *  Absent only on runs saved by an older version, which end after `settings.laps` laps. */
+export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; pausedAt?: number; durationMs?: number };
 
 export type Core = {
     settings: Settings;
@@ -325,7 +332,7 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
     if (!h || core.live || startBlockers(core, h).length) return core;
     return {
         ...core,
-        live: { heatId, t0: now, seed, speed },
+        live: { heatId, t0: now, seed, speed, durationMs: heatMinutesOf(core) * 60_000 },
         heats: core.heats.map(x => (x.id === heatId ? { ...x, called: false } : x)),
     };
 }
@@ -386,7 +393,36 @@ export function quickStartHeat(core: Core, count: number, now: number, seed: num
 export function liveTiming(core: Core, now: number, feed?: TimingFeed): DriverTiming[] {
     const h = runningHeat(core);
     if (!h || !core.live) return [];
-    return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(driversOf(core, h), elapsedOf(core.live, now), core.settings.laps);
+    const f = feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core));
+    const el = elapsedOf(core.live, now);
+    const dur = core.live.durationMs;
+    if (dur) return timedCut(f.snapshot(driversOf(core, h), el, TIMED_LAP_CAP), dur);
+    return f.snapshot(driversOf(core, h), el, core.settings.laps);
+}
+
+/** Upper bound of laps read for a timed heat (20 min at ~36 s = ~34 laps). */
+export const TIMED_LAP_CAP = 80;
+/** Lap target shown as "x/N": 0 for a timed heat (laps are counted, there is no fixed number). */
+export const lapTargetOf = (core: Core): number => (core.live && !core.live.durationMs ? core.settings.laps : 0);
+
+/**
+ * Pure: a timed heat. Laps count until time is up; the lap in progress when time runs out is the last one
+ * (the driver takes the chequered flag on crossing the line). Laps after that are ignored.
+ */
+export function timedCut(rows: DriverTiming[], durationMs: number): DriverTiming[] {
+    return rows.map(r => {
+        const laps: number[] = [];
+        let cum = 0;
+        for (const l of r.laps) { laps.push(l); cum += l; if (cum >= durationMs) break; }
+        return { ...r, laps, total: cum, best: laps.length ? Math.min(...laps) : null, last: laps.length ? laps[laps.length - 1] : null, finished: cum >= durationMs };
+    });
+}
+
+/** Time left on the clock: a timed heat counts down its minutes; a lap heat keeps the old estimate. */
+export function remainingOf(core: Core, timing: DriverTiming[], now: number): number {
+    const el = elapsedOf(core.live, now);
+    if (core.live?.durationMs) return Math.max(0, core.live.durationMs - el);
+    return estRemaining(timing, el, core.settings.laps);
 }
 
 /** End the run, mark the heat done and return its result for history. */
@@ -706,7 +742,10 @@ export type Result = {
     heatNum: number;
     at: number;
     simulated: boolean;
+    /** Lap target; 0 for a timed heat. */
     laps: number;
+    /** Heat length for a timed heat. */
+    minutes?: number;
     rows: { pos: number; kart: number; label: string; laps: number[]; best: number | null; total: number }[];
 };
 
@@ -718,7 +757,8 @@ export function resultOf(core: Core, heat: Heat, timing: DriverTiming[], now: nu
         heatNum: heat.num,
         at: now,
         simulated,
-        laps: core.settings.laps,
+        laps: core.live?.durationMs ? 0 : core.settings.laps,
+        ...(core.live?.durationMs ? { minutes: Math.round(core.live.durationMs / 60_000) } : {}),
         rows: ranked.map((t, i) => {
             const d = drivers.find(x => x.key === t.key)!;
             return { pos: i + 1, kart: d.kart, label: d.label, laps: t.laps, best: t.best, total: t.total };

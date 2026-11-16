@@ -529,5 +529,29 @@ test('customer screen: queue/call-up waiting screen by default; staff can switch
     assert.equal(L.screenState(q.core).state, 'race', 'a quick start without a queue goes straight to live timing');
 });
 
+test('timed heats: 10 or 20 minutes, 10 is the minimum; lap in progress at time-up is the last', () => {
+    const c = L.initialCore();
+    assert.equal(L.heatMinutesOf(c), 10);
+    assert.equal(L.heatMinutesOf({ ...c, settings: { ...c.settings, heatMinutes: 5 } }), 10, 'never below 10');
+    const c20 = { ...c, settings: { ...c.settings, heatMinutes: 20 } };
+    const q = L.quickStartHeat(c20, 4, 0, 11, 1).core;
+    assert.equal(q.live!.durationMs, 20 * 60_000);
+    // halfway: running, clock counts down
+    const mid = L.liveTiming(q, 10 * 60_000);
+    assert.ok(mid.every(r => !r.finished));
+    assert.equal(L.remainingOf(q, mid, 10 * 60_000), 10 * 60_000);
+    assert.equal(L.marshalState(q, 10 * 60_000).state, 'running');
+    // well after time-up: everyone took the flag on the first crossing after 20:00, no laps beyond it
+    const end = L.liveTiming(q, 25 * 60_000);
+    assert.ok(end.every(r => r.finished && r.total >= 20 * 60_000 && r.total - r.laps[r.laps.length - 1] < 20 * 60_000));
+    assert.ok(end.every(r => r.laps.length > 8), 'lap count is not capped at the old 8-lap setting');
+    assert.equal(L.marshalState(q, 25 * 60_000).state, 'finished');
+    const { result } = L.finishRun(q, 25 * 60_000);
+    assert.equal(result!.minutes, 20); assert.equal(result!.laps, 0);
+    // pure cut
+    const cut = L.timedCut([{ key: 'a', laps: [400, 400, 400], total: 1200, best: 400, last: 400, finished: false }], 700);
+    assert.deepEqual(cut[0].laps, [400, 400]); assert.equal(cut[0].finished, true);
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
