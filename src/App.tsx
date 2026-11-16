@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Callout, Closing, CopyButton, FileCard, Group, useLocalState } from '@instinct/files';
 import * as L from './logic';
 import * as Cloud from './cloud';
+declare const __BUILD__: string;
 import type { Session } from '@supabase/supabase-js';
 
 type Tab = 'form' | 'cashier' | 'heats' | 'live' | 'history' | 'settings';
@@ -542,6 +543,15 @@ function BoardControls({ core, now, act, shown, setShown }: { core: L.Core; now:
     </div>;
 }
 
+/** Always-visible broadcast state in the staff app bar, so a silent "not on the website" cannot happen. */
+function BroadcastChip({ session, on, status, enable, openSettings }: { session: boolean; on: boolean; status: string; enable: () => void; openSettings: () => void }) {
+    if (!session) return <button type="button" className="onair-tag bad" onClick={openSettings}>⚠ לא מחובר · לא משדר לאתר</button>;
+    if (!on) return <button type="button" className="onair-tag off" onClick={enable}>○ לא משדר לאתר · הפעל</button>;
+    if (status.startsWith('השידור נכשל')) return <button type="button" className="onair-tag bad" title={status} onClick={openSettings}>⚠ השידור לאתר נכשל</button>;
+    if (!status) return <span className="onair-tag">● מתחבר לאתר…</span>;
+    return <span className="onair-tag" title={status}>● משדר לאתר</span>;
+}
+
 /** Staff choice: what the customer website shows between heats. */
 function PublicViewChips({ core, update }: { core: L.Core; update: Update }) {
     const v = L.publicViewOf(core);
@@ -901,7 +911,8 @@ export function App() {
         const t = setTimeout(() => {
             void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), hist)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
         }, 300);
-        return () => clearTimeout(t);
+        const beat = setInterval(() => void Cloud.publishBoard(Cloud.boardOf(coreRef.current, Date.now(), histRef.current)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`)), 10_000);
+        return () => { clearTimeout(t); clearInterval(beat); };
     }, [sending, core, hist]);
     // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
     useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]);
@@ -990,14 +1001,12 @@ export function App() {
         <div className={`dk${shownTab === 'live' ? ' wide' : ''}`}>
             <header className="appbar">
                 <Logo />
-                <div className="appbar-title"><h1>מערכת זמנים</h1><span>Dan Karting · קארטינג</span></div>
+                <div className="appbar-title"><h1>מערכת זמנים</h1><span>Dan Karting · קארטינג · גרסה {__BUILD__}</span></div>
                 <div className="appbar-meta">
                     {core.live && <button type="button" className={`onair${L.isPaused(core) ? ' paused' : ''}`} onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} {L.isPaused(core) ? 'עצור' : 'על המסלול'}</button>}
                     <span className="sim-badge" title="אין חיבור לשעון ההקפות, לשרת או למסכים של המסלול">סימולציה</span>
                     {cashier && <span className="addon-badge">תוסף קופה</span>}
-                    {sending && !pubStatus.startsWith('השידור נכשל') && <span className="onair-tag">● משדר לאתר</span>}
-                    {sending && pubStatus.startsWith('השידור נכשל') && <button type="button" className="onair-tag bad" title={pubStatus} onClick={() => setTab('settings')}>⚠ השידור לאתר נכשל</button>}
-                    {ready && session && !broadcast && <button type="button" className="onair-tag off" onClick={() => setBroadcast(true)}>○ לא משדר לאתר · הפעל</button>}
+                    {ready && <BroadcastChip session={!!session} on={broadcast} status={pubStatus} enable={() => setBroadcast(true)} openSettings={() => setTab('settings')} />}
                 </div>
             </header>
             <nav className="tabs" aria-label="מסכים" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
