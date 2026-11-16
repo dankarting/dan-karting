@@ -87,3 +87,41 @@ export function onSession(cb: (s: Session | null) => void): () => void {
     const { data } = supabase.auth.onAuthStateChange((_e, s) => cb(s));
     return () => data.subscription.unsubscribe();
 }
+
+// ------------------------------------------------------------ decoder (AMB) through the bridge program
+// The bridge on the track laptop inserts one row per crossing into public.passings and keeps a heartbeat
+// in public.decoder_status (docs/decoder-setup.sql). Staff only: the public site gets laps via the board.
+type PassingRow = { uid: string; transponder: string; t: number };
+const toPassing = (r: PassingRow): L.Passing => ({ id: r.uid, transponder: String(r.transponder), t: Number(r.t) });
+
+/** Crossings at or after `sinceMs` (oldest first). */
+export async function fetchPassings(sinceMs: number, limit = 3000): Promise<L.Passing[] | null> {
+    const { data, error } = await supabase.from('passings').select('uid,transponder,t').gte('t', sinceMs).order('t', { ascending: true }).limit(limit);
+    if (error || !data) return null;
+    return (data as PassingRow[]).map(toPassing);
+}
+
+/** Latest crossings, newest first (Settings: "who just crossed the line"). */
+export async function fetchRecentPassings(limit = 30): Promise<L.Passing[] | null> {
+    const { data, error } = await supabase.from('passings').select('uid,transponder,t').order('t', { ascending: false }).limit(limit);
+    if (error || !data) return null;
+    return (data as PassingRow[]).map(toPassing);
+}
+
+/** Every new crossing, as it arrives. Returns an unsubscribe function. */
+export function subscribePassings(cb: (p: L.Passing) => void, onStatus?: (s: string) => void): () => void {
+    const ch = supabase.channel('passings_live')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'passings' }, msg => {
+            const r = msg.new as PassingRow | undefined;
+            if (r && r.transponder != null && r.t != null) cb(toPassing(r));
+        })
+        .subscribe(status => onStatus?.(status));
+    return () => { void supabase.removeChannel(ch); };
+}
+
+export type DecoderStatus = { connected?: boolean; source?: string; format?: string; passings?: number; lastTransponder?: string; lastAt?: number; error?: string; pending?: number; version?: string; sentAt?: number };
+export async function fetchDecoderStatus(): Promise<{ data: DecoderStatus; updatedAt: number } | null> {
+    const { data, error } = await supabase.from('decoder_status').select('data,updated_at').eq('id', 'main').maybeSingle();
+    if (error || !data) return null;
+    return { data: (data.data ?? {}) as DecoderStatus, updatedAt: Date.parse(data.updated_at as string) };
+}

@@ -53,8 +53,12 @@ export type Settings = {
      * (pending -> paid), so the payment gate cannot be bypassed from the timing screens.
      */
     cashierEnabled?: boolean;
-    /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
+    /** Kart number -> transponder number (the number printed on the transponder fixed to that kart). */
     transponders?: Record<string, string>;
+    /** Where lap times come from: 'sim' (default, demo) or 'decoder' (the AMB decoder through the bridge program). */
+    timingSource?: TimingSource;
+    /** Decoder mode: crossings closer than this to the previous one are ignored (double reads). Default 15 s. */
+    minLapSec?: number;
     /**
      * What the public (customer) website shows. Both show live timing while a heat runs (also a quick start
      * without a queue). 'lineup' (default): between heats the queue / call-up waiting screen.
@@ -68,13 +72,21 @@ export const HEAT_MINUTES = [10, 20] as const;
 export const MIN_HEAT_MINUTES = 10;
 export const heatMinutesOf = (core: Core): number => Math.max(MIN_HEAT_MINUTES, Math.round(core.settings.heatMinutes ?? MIN_HEAT_MINUTES));
 export type PublicView = 'heat' | 'lineup';
+export type TimingSource = 'sim' | 'decoder';
+export const timingSourceOf = (core: Core): TimingSource => core.settings.timingSource ?? 'sim';
+export const minLapMsOf = (core: Core): number => Math.max(3, Math.min(120, core.settings.minLapSec ?? 15)) * 1000;
 export const publicViewOf = (core: Core): PublicView => core.settings.publicView ?? 'lineup';
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** pausedAt: set while a marshal has stopped the heat ("עצור"); the clock and simulated laps freeze. */
 /** durationMs: a timed heat (the clock runs down; every driver finishes the lap in progress when time is up).
  *  Absent only on runs saved by an older version, which end after `settings.laps` laps. */
-export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; pausedAt?: number; durationMs?: number };
+/** Decoder runs (source 'decoder'): startedAt is the green-flag wall time (never shifted by pauses), passings are the
+ *  real crossings received since then, pausedMs is the total stopped time (added to a timed heat's length). */
+export type LiveRun = {
+    heatId: string; t0: number; seed: number; speed: number; pausedAt?: number; durationMs?: number;
+    source?: 'decoder'; startedAt?: number; passings?: Passing[]; pausedMs?: number;
+};
 
 export type Core = {
     settings: Settings;
@@ -330,9 +342,12 @@ export function startBlockers(core: Core, h: Heat): string[] {
 export function startHeat(core: Core, heatId: string, now: number, seed: number, speed = 1): Core {
     const h = queueOf(core).find(x => x.id === heatId);
     if (!h || core.live || startBlockers(core, h).length) return core;
+    const decoder = timingSourceOf(core) === 'decoder';
     return {
         ...core,
-        live: { heatId, t0: now, seed, speed, durationMs: heatMinutesOf(core) * 60_000 },
+        live: decoder
+            ? { heatId, t0: now, seed, speed: 1, durationMs: heatMinutesOf(core) * 60_000, source: 'decoder', startedAt: now, passings: [] }
+            : { heatId, t0: now, seed, speed, durationMs: heatMinutesOf(core) * 60_000 },
         heats: core.heats.map(x => (x.id === heatId ? { ...x, called: false } : x)),
     };
 }
@@ -343,7 +358,7 @@ export const elapsedOf = (live: LiveRun | null | undefined, now: number) =>
 
 /** Change simulation speed without jumping the clock (also while stopped). */
 export function setSpeed(core: Core, speed: number, now: number): Core {
-    if (!core.live || speed <= 0) return core;
+    if (!core.live || speed <= 0 || core.live.source === 'decoder') return core;
     const ref = core.live.pausedAt ?? now;
     const el = elapsedOf(core.live, now);
     return { ...core, live: { ...core.live, speed, t0: ref - el / speed } };
@@ -363,7 +378,8 @@ export const pauseRun = (core: Core, now: number): Core =>
 export function resumeRun(core: Core, now: number): Core {
     if (!core.live || core.live.pausedAt == null) return core;
     const { pausedAt, ...rest } = core.live;
-    return { ...core, live: { ...rest, t0: core.live.t0 + (now - pausedAt) } };
+    const stopped = now - pausedAt;
+    return { ...core, live: { ...rest, t0: core.live.t0 + stopped, ...(rest.source === 'decoder' ? { pausedMs: (rest.pausedMs ?? 0) + stopped } : {}) } };
 }
 
 export type MarshalState = 'idle' | 'running' | 'paused' | 'finished';
@@ -393,10 +409,14 @@ export function quickStartHeat(core: Core, count: number, now: number, seed: num
 export function liveTiming(core: Core, now: number, feed?: TimingFeed): DriverTiming[] {
     const h = runningHeat(core);
     if (!h || !core.live) return [];
-    const f = feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core));
-    const el = elapsedOf(core.live, now);
-    const dur = core.live.durationMs;
-    if (dur) return timedCut(f.snapshot(driversOf(core, h), el, TIMED_LAP_CAP), dur);
+    const live = core.live;
+    const f = feed ?? (live.source === 'decoder'
+        ? makePassingFeed(() => live.passings ?? [], live.startedAt ?? live.t0, transponderOf(core), { ...DEFAULT_LAP_RULES, minLapMs: minLapMsOf(core) })
+        : makeSimulatedFeed(live.seed, transponderOf(core)));
+    const el = elapsedOf(live, now);
+    const dur = live.durationMs;
+    // decoder laps are real time, so a stop ("עצור") lengthens the heat by the stopped time
+    if (dur) return timedCut(f.snapshot(driversOf(core, h), el, TIMED_LAP_CAP), dur + (live.source === 'decoder' ? (live.pausedMs ?? 0) + (live.pausedAt != null ? now - live.pausedAt : 0) : 0));
     return f.snapshot(driversOf(core, h), el, core.settings.laps);
 }
 
@@ -429,7 +449,7 @@ export function remainingOf(core: Core, timing: DriverTiming[], now: number): nu
 export function finishRun(core: Core, now: number, feed?: TimingFeed): { core: Core; result: Result | null } {
     const h = runningHeat(core);
     if (!h) return { core: { ...core, live: null }, result: null };
-    const result = resultOf(core, h, liveTiming(core, now, feed), now, !feed);
+    const result = resultOf(core, h, liveTiming(core, now, feed), now, !feed && core.live?.source !== 'decoder');
     return {
         core: { ...core, live: null, heats: core.heats.map(x => (x.id === h.id ? { ...x, status: 'done' as const, called: false } : x)) },
         result,
@@ -616,7 +636,7 @@ export interface TimingFeed {
 }
 
 /** One crossing of the timing line, as a decoder would report it. `t` is ms on the timing clock. */
-export type Passing = { transponder: string; t: number };
+export type Passing = { transponder: string; t: number; id?: string };
 
 export type LapRules = {
     /** Crossings closer than this to the previous counted one are ignored (double reads, pit-lane noise). Demo value, not a venue setting yet. */
@@ -630,9 +650,50 @@ export type LapRules = {
 };
 export const DEFAULT_LAP_RULES: LapRules = { minLapMs: 15000, firstCrossing: 'lap' };
 
-/** Kart -> transponder id. The real mapping (fixed per kart? swapped?) is unknown; the default is a synthetic id. */
+/** Kart -> transponder id. A kart without a mapped transponder gets a synthetic id (simulation only). */
 export const simTransponder = (kart: number) => `SIM-${kart}`;
 export const transponderOf = (core: Core) => (kart: number) => core.settings.transponders?.[String(kart)] || simTransponder(kart);
+
+/** Kart number a transponder is mapped to, or null. */
+export function kartOfTransponder(core: Core, tx: string): number | null {
+    for (const [k, v] of Object.entries(core.settings.transponders ?? {})) if (v === tx) return Number(k);
+    return null;
+}
+
+/**
+ * Map a transponder to a kart (Settings). A transponder belongs to one kart only, so it is removed from any
+ * other kart first. Empty transponder = remove the kart's mapping.
+ */
+export function setTransponder(core: Core, kart: number, tx: string): Core {
+    const k = Math.floor(kart);
+    if (!(k >= 1 && k <= 99)) return core;
+    const v = tx.trim();
+    const map = Object.fromEntries(Object.entries(core.settings.transponders ?? {}).filter(([key, x]) => key !== String(k) && (!v || x !== v)));
+    if (v) map[String(k)] = v;
+    return { ...core, settings: { ...core.settings, transponders: map } };
+}
+
+/**
+ * Decoder mode: add crossings received from the bridge to the heat on track. Only crossings after the green
+ * flag count; a crossing already held (same id, or same transponder and time) is skipped. Pure.
+ */
+export function addPassings(core: Core, ps: Passing[]): Core {
+    const live = core.live;
+    if (!live || live.source !== 'decoder' || ps.length === 0) return core;
+    const start = live.startedAt ?? live.t0;
+    const have = live.passings ?? [];
+    const seen = new Set(have.map(p => p.id ?? `${p.transponder}@${p.t}`));
+    const add = ps.filter(p => p.t >= start && !seen.has(p.id ?? `${p.transponder}@${p.t}`) && (seen.add(p.id ?? `${p.transponder}@${p.t}`), true));
+    if (add.length === 0) return core;
+    return { ...core, live: { ...live, passings: [...have, ...add].sort((a, b) => a.t - b.t) } };
+}
+
+/** Decoder mode: transponders crossing the line during this heat that belong to no driver in it. */
+export function unknownOnTrack(core: Core): string[] {
+    const h = runningHeat(core);
+    if (!h || core.live?.source !== 'decoder') return [];
+    return unknownTransponders(driversOf(core, h), core.live.passings ?? [], transponderOf(core));
+}
 
 /** Pure: build each driver's laps from raw passings. Passings may arrive unsorted and with duplicates. */
 export function lapsFromPassings(

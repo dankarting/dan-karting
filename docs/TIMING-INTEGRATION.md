@@ -1,7 +1,17 @@
-# Timing integration - what a real decoder input needs (design only)
+# Timing integration
 
-Status: the demo is fully SIMULATED. No hardware has been accessed, nothing is connected,
-no vendor has been contacted. This page records the seam and the open questions.
+Status (2026-11-16): a real decoder path is BUILT but NOT YET TESTED ON SITE.
+- `bridge/` - `dk-bridge`, a Go program for the Windows track laptop: reads the AMB decoder (serial COM with
+  automatic baud, or TCP), parses AMB RC2 `$` lines, AMB P3 binary (port 5403) and legacy `@` lines, maps the
+  decoder clock to wall time, and inserts passings into Supabase `public.passings` (+ heartbeat in
+  `public.decoder_status`). Offline queue + local CSV log. Modes: run, listen, ports, find, sim, fake-decoder.
+  Owner instructions (Hebrew): `docs/BRIDGE-HE.md`. SQL: `docs/decoder-setup.sql`.
+- App: Settings -> "שעון הקפות" switches the timing source to the decoder, maps transponder -> kart, shows the
+  bridge state and the latest crossings. A heat started in decoder mode stores its passings in `core.live.passings`
+  (so the public board computes the same laps), and its result is saved as real (simulated: false).
+- Still open: the RC2 time unit (assumed ms, configurable), the actual connection used at the venue (the owner
+  reports a laptop on a network cable running a CMD program), and whether that program must stay running.
+The rest of this page is the original design note.
 
 ## Target
 This app is meant to replace the venue's current timing software and read the venue's own

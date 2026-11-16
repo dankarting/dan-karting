@@ -589,3 +589,20 @@ body { background: #0b0b0c; }
 .mc-left { display: inline-flex; align-items: baseline; gap: 6px; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; color: #fff; }
 .mc-left small { font-size: 12px; font-weight: 600; color: #aaa; }
 .hl-field { margin-bottom: 10px; }
+
+/* ---- real decoder timing: no sector columns (a single start/finish loop gives lap times only) */
+.tboard.nosec .tb-row > :nth-child(4), .tboard.nosec .tb-row > :nth-child(5), .tboard.nosec .tb-row > :nth-child(6) { display: none !important; }
+@media (min-width: 900px) {
+  .tboard.nosec .tb-row { grid-template-columns: minmax(56px, 5vw) minmax(60px, 5.5vw) minmax(0,1fr) 12vw 14vw 12vw 7vw; }
+}
+.wall-sim.real { color: #7ee2a8; border-color: #1f5a3a; }
+.sim-badge.real { color: #7ee2a8; border-color: #1f5a3a; }
+.sim-badge.real.off { color: #ff8a8a; border-color: #6a2020; }
+.tx-table { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 8px 0; }
+.tx-cell { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 6px; align-items: center; }
+.tx-cell .mt-kart { justify-self: center; }
+.tx-cell .inp { min-width: 0; direction: ltr; text-align: left; font-variant-numeric: tabular-nums; }
+.tx-recent { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; }
+.tx-recent li { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--dk-line); font-variant-numeric: tabular-nums; }
+.tx-recent .inp { width: 64px; }
+.tx-ok { color: #7ee2a8; } .tx-bad { color: #ff8a8a; }

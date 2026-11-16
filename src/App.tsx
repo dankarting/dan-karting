@@ -402,7 +402,7 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
     return <span className={`tb-lights ${state}`} aria-label={state === 'live' ? 'מקצה פעיל' : 'ממתין'}>{[0, 1, 2, 3].map(i => <i key={i} />)}</span>;
 }
 
-function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; controls?: React.ReactNode; onClose: () => void }) {
+function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; controls?: React.ReactNode; onClose: () => void; real?: boolean }) {
     useEscape(p.onClose);
     const [bodyRef, box] = useBox<HTMLDivElement>();
     // Fit every row of the heat (up to 14+) into the space left under the header: row height and font follow it.
@@ -419,7 +419,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
     const colFs = vw >= 900 ? Math.floor((vw * 0.075) / 3.6) : 20;
     const fs = fit ? Math.max(12, Math.min(34, colFs, Math.floor(rowH * 0.4))) : undefined;
     const rowsStyle = fit ? ({ gridTemplateRows: `${headRow}px repeat(${n}, ${Math.floor(rowH)}px)`, alignContent: 'start', '--fs': `${fs}px` } as React.CSSProperties) : undefined;
-    return <div className="wall tboard" role="dialog" aria-label="לוח זמנים">
+    return <div className={`wall tboard${p.real ? ' nosec' : ''}`} role="dialog" aria-label="לוח זמנים">
         <header className="tb-head">
             <Logo big />
             <Lights state={p.state} />
@@ -431,7 +431,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
         </header>
         {p.controls}
-        <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>
+        {p.real ? <div className="wall-sim real">זמנים אמיתיים מהדקודר</div> : <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>}
         <div className="tb-body" ref={bodyRef}>
         <ol className={`tb-rows${fit ? ' fit' : ''}`} style={rowsStyle}>
             <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>S1</span><span>S2</span><span>S3</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
@@ -502,7 +502,8 @@ function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
     const bestAll = Math.min(...timing.map(t => t.best ?? Infinity));
     // simulated sectors of every completed lap: overall best (purple) and personal best (green) per sector
     const secs = new Map<string, [number, number, number][]>();
-    timing.forEach(t => { const idx = drivers.findIndex(d => d.key === t.key); secs.set(t.key, t.laps.map((ms, n) => L.sectorsOf(ms, seed, idx, n))); });
+    // real decoder timing has one loop (start/finish) only: no sectors
+    if (core.live.source !== 'decoder') timing.forEach(t => { const idx = drivers.findIndex(d => d.key === t.key); secs.set(t.key, t.laps.map((ms, n) => L.sectorsOf(ms, seed, idx, n))); });
     const overall = [0, 1, 2].map(i => Math.min(...[...secs.values()].flat().map(x => x[i]), Infinity));
     return ranked.map((t, i) => {
         const d = drivers.find(x => x.key === t.key)!;
@@ -589,7 +590,7 @@ function TrackScreen({ core, now, onClose, act, ctlShown = true, setCtlShown = (
         const el = L.elapsedOf(core.live, now);
         const paused = L.isPaused(core);
         return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={done ? 'הסתיים · תוצאות' : paused ? 'המקצה עצור' : 'על המסלול · בלייב'} totalLaps={L.lapTargetOf(core)} state={done ? 'done' : paused ? 'wait' : 'live'}
-            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(L.remainingOf(core, timing, now))} rows={liveRowsOf(core, timing)} onClose={onClose}
+            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(L.remainingOf(core, timing, now))} rows={liveRowsOf(core, timing)} onClose={onClose} real={core.live?.source === 'decoder'}
             footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} controls={controls} />;
     }
     return <CallDisplay core={core} state={sc.state === 'race' ? 'empty' : sc.state} heat={sc.heat} onClose={onClose} controls={controls} />;
@@ -670,6 +671,9 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
     const heat = ms.heat;
     const timing = L.liveTiming(core, now);
     const rows = liveRowsOf(core, timing);
+    const real = heat ? core.live?.source === 'decoder' : L.timingSourceOf(core) === 'decoder';
+    const unknownTx = L.unknownOnTrack(core);
+    const unmapped = real && (heat ?? ms.target) ? [...new Set(L.driversOf(core, (heat ?? ms.target)!).map(d => d.kart).filter(k => !core.settings.transponders?.[String(k)]))] : [];
     const clock = heat ? L.fmt(Math.min(L.raceClock(timing, L.elapsedOf(core.live, now)), 3_600_000)) : '0.00';
     const qList = L.queueOf(core);
     const calledH = L.calledHeat(core);
@@ -696,6 +700,8 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
                 <button type="button" className="mc-btn save" disabled={!mb.canSave} onClick={act.saveAndNext}><span aria-hidden="true">✓</span>שמור</button>
             </div>
         </div>
+        {unmapped.length > 0 && <p className="mc-warn">אין טרנספונדר לקארט {unmapped.join(', ')}: ההקפות שלו לא ייספרו. שייך בהגדרות ← שעון הקפות.</p>}
+        {unknownTx.length > 0 && <p className="mc-warn">עובר בקו טרנספונדר שלא שייך לאף נהג במקצה: {unknownTx.join(', ')}. שייך אותו לקארט בהגדרות ← שעון הקפות.</p>}
         {ms.state === 'idle' && ms.target && mb.blockers.length > 0 && <p className="mc-warn">לא ניתן להתחיל את מקצה {ms.target.num}: {mb.blockers.join(', ')}</p>}
 
         <div className="mc-grid">
@@ -703,7 +709,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
                 <header className="mc-card-h">
                     <h2>{heat ? 'זמנים חיים' : ms.target ? `המקצה הבא · מקצה ${ms.target.num}` : 'אין מקצה בתור'}</h2>
                     {heat && <button type="button" className="kb sm" aria-pressed={editNames} onClick={() => setEditNames(!editNames)}>{editNames ? 'סגור עריכת שמות' : 'ערוך שמות'}</button>}
-                    <span className="mc-sim">זמנים מדומים</span>
+                    <span className="mc-sim">{real ? 'זמנים מהדקודר' : 'זמנים מדומים'}</span>
                 </header>
                 {heat && !editNames && <MarshalTable rows={rows} laps={L.lapTargetOf(core)} />}
                 {heat && editNames && <><p className="meta">שמות בלבד בזמן מקצה. הקארטים נעולים עד הסוף.</p><NameEditor core={core} heat={heat} update={update} karts={false} /></>}
@@ -752,10 +758,10 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
                             <Btn small onClick={() => update(L.fillDemoNames)}>מלא שמות דמו</Btn>
                             {heat && <Btn small kind="danger" onClick={act.cancel}>בטל מקצה בלי לשמור</Btn>}
                         </div>
-                        {heat && <div className="chips" role="radiogroup" aria-label="מהירות סימולציה">
+                        {heat && !real && <div className="chips" role="radiogroup" aria-label="מהירות סימולציה">
                             {SPEEDS.map(sp => <button key={sp} type="button" role="radio" aria-checked={core.live?.speed === sp} className={`chip${core.live?.speed === sp ? ' sel' : ''}`} onClick={() => update(c => L.setSpeed(c, sp, Date.now()))}>x{sp}</button>)}
                         </div>}
-                        <p className="meta">הזמנים מומצאים על ידי האפליקציה. אין חיבור לשעון ההקפות או למסכים של המסלול.</p>
+                        <p className="meta">{real ? 'הזמנים מגיעים מהדקודר דרך תוכנת הגשר במחשב של המסלול.' : 'הזמנים מומצאים על ידי האפליקציה. אפשר לחבר את הדקודר בהגדרות ← שעון הקפות.'}</p>
                     </div>}
                 </section>
             </aside>
@@ -831,7 +837,7 @@ function PublicSite({ session, on, setOn, status }: { session: Session | null; o
     </Group>;
 }
 
-function Settings({ core, update, hist, onReset, site }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site?: React.ReactNode }) {
+function Settings({ core, update, hist, onReset, site, timing }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site?: React.ReactNode; timing?: React.ReactNode }) {
     const s = core.settings;
     const [t, setT] = useState('');
     const [confirm, setConfirm] = useState(false);
@@ -840,6 +846,7 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
     const overQueued = core.heats.filter(h => h.status === 'approved' && L.heatCount(h) > s.capacity).length;
     return <>
         {site}
+        {timing}
         <Group label="תוספים" heading>
             <div className="field"><span className="flabel">תוסף קופה (הרשמה + אישור תשלום)</span>
                 <div className="chips" role="radiogroup" aria-label="תוסף קופה">
@@ -875,7 +882,7 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
             <Callout title="נתוני דמה בלבד" tone="warning">אין חיבור לשרת, לקופה, למסכים או לשעון ההקפות של העסק. אין תשלומים ואין נתוני לקוחות. אל תקליד כאן פרטים אישיים של לקוחות.</Callout>
             <ul className="plain">
                 <li><b>שמירה:</b> במכשיר ובדפדפן הזה בלבד. טלפון אחד לא רואה את מה שהוזן במחשב. מערכת משותפת לכמה מכשירים ומסכים דורשת שרת, והיא שלב הבא.</li>
-                <li><b>זמנים:</b> מדומים. הקוד מפריד את מקור הזמנים (TimingFeed) מהמסך, כך שבהמשך אפשר להחליף אותו במקור קריאה בלבד, אם יהיה אישור וגישה.</li>
+                <li><b>זמנים:</b> {L.timingSourceOf(core) === 'decoder' ? 'מהדקודר AMB של המסלול, דרך תוכנת הגשר (dk-bridge) במחשב הנייד. מקטעים S1/S2/S3 לא מוצגים: יש לולאת זמן אחת בקו.' : 'מדומים. אפשר לחבר את הדקודר האמיתי ב"שעון הקפות" למעלה.'}</li>
                 <li><b>קריאה למסלול:</b> מסך בלבד, בלי הכרזה קולית. מה מפעיל קריאה באתר האמיתי עוד לא הוחלט. התזמונים בדמו האוטומטי להמחשה.</li>
                 <li><b>כללי שיבוץ:</b> הצעה בלבד. בטיחות, גיל וגובה לא מוגדרים כאן.</li>
             </ul>
@@ -887,6 +894,66 @@ function Settings({ core, update, hist, onReset, site }: { core: L.Core; update:
             {!confirm ? <Btn kind="danger" onClick={() => setConfirm(true)}>איפוס כל הנתונים</Btn> : <div className="row-actions"><span>למחוק הכול במכשיר הזה?</span><Btn kind="danger" onClick={() => { onReset(); setConfirm(false); }}>כן, מחק</Btn><Btn onClick={() => setConfirm(false)}>ביטול</Btn></div>}
         </Group>
     </>;
+}
+
+// ------------------------------------------------------------- decoder (real lap timing)
+/** The bridge sends a heartbeat every 10 s; older than 35 s = not running. */
+function bridgeOk(dec: { data: Cloud.DecoderStatus; updatedAt: number } | null, now: number): boolean {
+    return !!dec && !!dec.data.connected && now - Math.max(dec.updatedAt || 0, dec.data.sentAt || 0) < 35_000;
+}
+const clockOf = (t: number) => new Date(t).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+function DecoderSettings({ core, update, session, recent, dec, now }: { core: L.Core; update: Update; session: boolean; recent: L.Passing[]; dec: { data: Cloud.DecoderStatus; updatedAt: number } | null; now: number }) {
+    const on = L.timingSourceOf(core) === 'decoder';
+    const map = core.settings.transponders ?? {};
+    const maxKart = Math.max(core.settings.capacity, ...Object.keys(map).map(Number).filter(n => n > 0), 0);
+    const [extra, setExtra] = useState(0);
+    const karts = Array.from({ length: Math.min(99, maxKart + extra) }, (_, i) => i + 1);
+    const [assign, setAssign] = useState<Record<string, string>>({});
+    const ok = bridgeOk(dec, Date.now());
+    const upd = (p: Partial<L.Settings>) => update(c => ({ ...c, settings: { ...c.settings, ...p } }));
+    return <Group label="שעון הקפות · דקודר AMB" heading>
+        <div className="field"><span className="flabel">מקור הזמנים</span>
+            <div className="chips" role="radiogroup" aria-label="מקור הזמנים">
+                <button type="button" role="radio" aria-checked={!on} className={`chip${!on ? ' sel' : ''}`} onClick={() => upd({ timingSource: 'sim' })}>סימולציה</button>
+                <button type="button" role="radio" aria-checked={on} className={`chip${on ? ' sel' : ''}`} onClick={() => upd({ timingSource: 'decoder' })}>דקודר AMB (אמיתי)</button>
+            </div>
+            <p className="meta">בדקודר: תוכנת הגשר (dk-bridge) רצה במחשב הנייד שמחובר לדקודר, ושולחת כל מעבר בקו. ההקפות נספרות מרגע "התחלה". מקצה שכבר רץ ממשיך במקור שבו התחיל.</p>
+        </div>
+        {on && <>
+            {!session && <Callout title="צריך להתחבר כצוות" tone="warning">כדי לקבל מעברים מהדקודר צריך להיות מחובר עם משתמש הצוות.</Callout>}
+            {session && <p className={ok ? 'tx-ok' : 'tx-bad'}>
+                {ok ? `✓ הגשר מחובר לדקודר (${dec!.data.source ?? ''}${dec!.data.format ? ` · ${dec!.data.format}` : ''}) · ${dec!.data.passings ?? 0} מעברים`
+                    : dec ? `✗ הגשר לא מחובר לדקודר${dec.data.error ? `: ${dec.data.error}` : ''} · עדכון אחרון ${clockOf(Math.max(dec.updatedAt || 0, dec.data.sentAt || 0))}`
+                        : '✗ עוד לא התקבל סימן מהגשר. הפעל את dk-bridge במחשב של המסלול (הוראות: docs/BRIDGE-HE.md).'}
+            </p>}
+            <Stepper label="הקפה מינימלית (שניות) · קריאות כפולות מתחת לזה לא נספרות" value={Math.round(L.minLapMsOf(core) / 1000)} min={3} max={120} onChange={n => upd({ minLapSec: n })} />
+            <div className="field"><span className="flabel">מעברים אחרונים בקו</span>
+                <p className="meta">העבר קארט על הקו, ראה איזה טרנספונדר הופיע, והקלד את מספר הקארט.</p>
+                {recent.length === 0 ? <p className="meta">עוד אין מעברים.</p> : <ul className="tx-recent">
+                    {recent.slice(0, 15).map(p => {
+                        const k = L.kartOfTransponder(core, p.transponder);
+                        return <li key={p.id ?? `${p.transponder}@${p.t}`}>
+                            <bdi dir="ltr">{clockOf(p.t)}</bdi>
+                            <span><bdi dir="ltr">{p.transponder}</bdi> · {k ? <b>קארט {k}</b> : <span className="tx-bad">לא משויך</span>}</span>
+                            {!k && <span className="inline"><input className="inp" type="number" inputMode="numeric" min={1} max={99} placeholder="קארט" aria-label={`קארט לטרנספונדר ${p.transponder}`} value={assign[p.transponder] ?? ''} onChange={e => setAssign(a => ({ ...a, [p.transponder]: e.target.value }))} />
+                                <Btn small onClick={() => { const n = Number(assign[p.transponder]); if (n >= 1) update(c => L.setTransponder(c, n, p.transponder)); }}>שייך</Btn></span>}
+                        </li>;
+                    })}
+                </ul>}
+            </div>
+        </>}
+        <div className="field"><span className="flabel">קארט ← מספר טרנספונדר</span>
+            <div className="tx-table">
+                {karts.map(k => <label key={k} className="tx-cell"><span className="mt-kart">{k}</span>
+                    <input key={`${k}-${map[String(k)] ?? ''}`} className="inp" inputMode="numeric" placeholder="—" aria-label={`טרנספונדר של קארט ${k}`} defaultValue={map[String(k)] ?? ''} maxLength={12}
+                        onBlur={e => { const v = e.target.value.trim(); if (v !== (map[String(k)] ?? '')) update(c => L.setTransponder(c, k, v)); }}
+                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} /></label>)}
+            </div>
+            <Btn small onClick={() => setExtra(x => x + 5)}>עוד קארטים</Btn>
+            <p className="meta">המספר שמודפס על הטרנספונדר שמחובר לקארט. טרנספונדר שעובר לקארט אחר נמחק מהקודם.</p>
+        </div>
+    </Group>;
 }
 
 // ---------------------------------------------------------------------- app
@@ -929,6 +996,31 @@ export function App() {
         const beat = setInterval(() => void Cloud.publishBoard(Cloud.boardOf(coreRef.current, Date.now(), histRef.current)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`)), 10_000);
         return () => { clearTimeout(t); clearInterval(beat); };
     }, [sending, core, hist]);
+    // Real lap timing: crossings from the bridge program (decoder) arrive through Supabase in real time.
+    const decoderOn = ready && !!session && L.timingSourceOf(core) === 'decoder';
+    const [recent, setRecent] = useState<L.Passing[]>([]);
+    const [dec, setDec] = useState<{ data: Cloud.DecoderStatus; updatedAt: number } | null>(null);
+    useEffect(() => {
+        if (!decoderOn) return;
+        void Cloud.fetchRecentPassings(30).then(r => { if (r) setRecent(r); });
+        const off = Cloud.subscribePassings(p => {
+            setRecent(r => [p, ...r.filter(x => x.id !== p.id)].slice(0, 30));
+            update(c => L.addPassings(c, [p]));
+        });
+        const poll = () => void Cloud.fetchDecoderStatus().then(setDec);
+        poll();
+        const i = setInterval(poll, 10_000);
+        return () => { off(); clearInterval(i); };
+    }, [decoderOn]);
+    // catch up on crossings of the heat on track (page reloaded, or a gap in the live connection): every 15 s
+    const liveStart = core.live?.source === 'decoder' ? core.live.startedAt ?? core.live.t0 : null;
+    useEffect(() => {
+        if (!decoderOn || liveStart == null) return;
+        const catchUp = () => void Cloud.fetchPassings(liveStart).then(ps => { if (ps) update(c => L.addPassings(c, ps)); });
+        catchUp();
+        const i = setInterval(catchUp, 15_000);
+        return () => clearInterval(i);
+    }, [decoderOn, liveStart]);
     // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
     useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]);
 
@@ -1019,7 +1111,9 @@ export function App() {
                 <div className="appbar-title"><h1>מערכת זמנים</h1><span>Dan Karting · קארטינג · גרסה {__BUILD__}</span></div>
                 <div className="appbar-meta">
                     {core.live && <button type="button" className={`onair${L.isPaused(core) ? ' paused' : ''}`} onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} {L.isPaused(core) ? 'עצור' : 'על המסלול'}</button>}
-                    <span className="sim-badge" title="אין חיבור לשעון ההקפות, לשרת או למסכים של המסלול">סימולציה</span>
+                    {L.timingSourceOf(core) === 'decoder'
+                        ? <button type="button" className={`sim-badge real${bridgeOk(dec, Date.now()) ? '' : ' off'}`} onClick={() => setTab('settings')} title="מצב הגשר לדקודר">{bridgeOk(dec, Date.now()) ? 'דקודר מחובר' : 'דקודר לא מחובר'}</button>
+                        : <span className="sim-badge" title="הזמנים מדומים. אפשר לחבר את הדקודר בהגדרות">סימולציה</span>}
                     {cashier && <span className="addon-badge">תוסף קופה</span>}
                     {ready && <BroadcastChip session={!!session} on={broadcast} status={pubStatus} enable={() => setBroadcast(true)} openSettings={() => setTab('settings')} />}
                 </div>
@@ -1033,7 +1127,7 @@ export function App() {
             {ready && shownTab === 'heats' && <Heats core={core} update={update} />}
             {ready && shownTab === 'live' && <Live core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} act={boardActions} goHeats={goHeats} />}
             {ready && shownTab === 'history' && <History hist={hist} />}
-            {ready && shownTab === 'settings' && <Settings site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); setHist([]); }} />}
+            {ready && shownTab === 'settings' && <Settings site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} timing={<DecoderSettings core={core} update={update} session={!!session} recent={recent} dec={dec} now={now} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); setHist([]); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
             {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} act={boardActions} ctlShown={ctlShown} setCtlShown={setCtlShown} />}
             {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות מקצה ${lastRes.heatNum}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}

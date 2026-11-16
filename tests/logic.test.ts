@@ -553,5 +553,50 @@ test('timed heats: 10 or 20 minutes, 10 is the minimum; lap in progress at time-
     assert.deepEqual(cut[0].laps, [400, 400]); assert.equal(cut[0].finished, true);
 });
 
+test('decoder timing: transponder map, real passings -> laps, stop lengthens the heat, real result', () => {
+    let c = L.initialCore();
+    c = { ...c, settings: { ...c.settings, timingSource: 'decoder' as const, heatMinutes: 10 } };
+    c = L.setTransponder(c, 1, '1000001');
+    c = L.setTransponder(c, 2, '1000002');
+    c = L.setTransponder(c, 3, '1000001'); // moved to kart 3: one transponder, one kart
+    assert.equal(L.kartOfTransponder(c, '1000001'), 3);
+    assert.equal(c.settings.transponders!['1'], undefined);
+    c = L.setTransponder(c, 1, '1000009');
+    const T0 = 1_000_000;
+    const q = L.quickStartHeat(c, 3, T0, 5, 20).core;
+    assert.equal(q.live!.source, 'decoder'); assert.equal(q.live!.speed, 1, 'no speed-up with real timing');
+    assert.equal(L.setSpeed(q, 5, T0 + 10), q);
+    // kart 1 = 1000009, kart 2 = 1000002, kart 3 = 1000001
+    const ps: L.Passing[] = [
+        { transponder: '1000009', t: T0 - 5000, id: 'old' }, // before the green flag: ignored
+        { transponder: '1000009', t: T0 + 40_000, id: 'a1' },
+        { transponder: '1000009', t: T0 + 40_200, id: 'dbl' }, // double read
+        { transponder: '1000009', t: T0 + 78_000, id: 'a2' },
+        { transponder: '1000002', t: T0 + 42_000, id: 'b1' },
+        { transponder: '7777777', t: T0 + 45_000, id: 'x' },
+    ];
+    let r = L.addPassings(q, ps);
+    assert.equal(L.addPassings(r, ps), r, 'resent passings are ignored');
+    assert.equal(r.live!.passings!.length, 5);
+    const tm = L.liveTiming(r, T0 + 80_000);
+    const k1 = tm[0];
+    assert.deepEqual(k1.laps, [40_000, 38_000]); assert.equal(k1.best, 38_000);
+    assert.deepEqual(tm[1].laps, [42_000]); assert.deepEqual(tm[2].laps, []);
+    assert.deepEqual(L.unknownOnTrack(r), ['7777777']);
+    // stop for 60 s at 9:00, resume: the heat runs to 11:00 of real time
+    r = L.pauseRun(r, T0 + 540_000); r = L.resumeRun(r, T0 + 600_000);
+    assert.equal(r.live!.pausedMs, 60_000);
+    r = L.addPassings(r, [{ transponder: '1000009', t: T0 + 620_000, id: 'a3' }]); // 10:20 real < 11:00
+    assert.equal(L.liveTiming(r, T0 + 621_000)[0].finished, false);
+    r = L.addPassings(r, [{ transponder: '1000009', t: T0 + 665_000, id: 'a4' }]);
+    assert.equal(L.liveTiming(r, T0 + 666_000)[0].finished, true);
+    const { result } = L.finishRun(r, T0 + 700_000);
+    assert.equal(result!.simulated, false, 'a decoder heat is saved as real timing');
+    assert.equal(result!.rows[0].kart, 1); assert.equal(result!.rows[0].laps.length, 4);
+    // simulation mode is unchanged
+    const s = L.quickStartHeat(L.initialCore(), 2, 0, 3, 5).core;
+    assert.equal(s.live!.source, undefined); assert.equal(L.addPassings(s, ps), s);
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
