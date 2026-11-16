@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Callout, Closing, CopyButton, FileCard, Group, useLocalState } from '@instinct/files';
 import * as L from './logic';
+import * as Cloud from './cloud';
+import type { Session } from '@supabase/supabase-js';
 
 type Tab = 'form' | 'cashier' | 'heats' | 'live' | 'history' | 'settings';
 /** CORE: the timing system. Always present. */
@@ -541,9 +543,10 @@ function BoardControls({ core, now, act, shown, setShown }: { core: L.Core; now:
 }
 
 /** The venue screen: switches by itself between lineup (call / next / empty) and live timing, with its own controls. */
-function TrackScreen({ core, now, onClose, act, ctlShown, setCtlShown }: { core: L.Core; now: number; onClose: () => void; act: MarshalActions; ctlShown: boolean; setCtlShown: (b: boolean) => void }) {
+function TrackScreen({ core, now, onClose, act, ctlShown = true, setCtlShown = () => {} }: { core: L.Core; now: number; onClose: () => void; act?: MarshalActions; ctlShown?: boolean; setCtlShown?: (b: boolean) => void }) {
     const sc = L.screenState(core);
-    const controls = <BoardControls core={core} now={now} act={act} shown={ctlShown} setShown={setCtlShown} />;
+    // staff screens get the marshal controls; the public website (no act) shows the board only
+    const controls = act ? <BoardControls core={core} now={now} act={act} shown={ctlShown} setShown={setCtlShown} /> : undefined;
     if (sc.state === 'race' && sc.heat) {
         const timing = L.liveTiming(core, now);
         const done = L.allFinished(timing);
@@ -764,7 +767,33 @@ function History({ hist }: { hist: L.Result[] }) {
 }
 
 // ----------------------------------------------------------------- settings
-function Settings({ core, update, hist, onReset }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void }) {
+/** Staff sign-in for the public timing website. While signed in and switched on, this device publishes the board. */
+function PublicSite({ session, on, setOn, status }: { session: Session | null; on: boolean; setOn: (b: boolean) => void; status: string }) {
+    const [email, setEmail] = useState('');
+    const [pw, setPw] = useState('');
+    const [err, setErr] = useState('');
+    const [busy, setBusy] = useState(false);
+    const url = `${location.origin}${location.pathname}`;
+    const login = async () => { setBusy(true); setErr(''); const e = await Cloud.signIn(email.trim(), pw); setBusy(false); if (e) setErr('הכניסה נכשלה: ' + e); else setPw(''); };
+    return <Group label="אתר צפייה ציבורי" heading>
+        <p className="meta">כל אחד יכול לפתוח את <a href={url} target="_blank" rel="noreferrer">{url}</a> ולראות בזמן אמת את מסך הקריאה ולוח הזמנים. רק מכשיר של צוות מחובר משדר אליו. רישומים שעוד לא שולמו לא נשלחים לאתר.</p>
+        {!session ? <>
+            <label className="field"><span className="flabel">שם משתמש</span><input className="inp" type="text" autoCapitalize="none" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} dir="ltr" /></label>
+            <label className="field"><span className="flabel">סיסמה</span><input className="inp" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} dir="ltr" /></label>
+            <Btn kind="primary" disabled={busy || !email.trim() || !pw} onClick={login}>{busy ? 'מתחבר…' : 'כניסת צוות'}</Btn>
+            {err && <p className="err" role="alert">{err}</p>}
+        </> : <>
+            <p className="meta">מחובר כ-<bdi>{session.user.email?.replace('@' + Cloud.STAFF_DOMAIN, '')}</bdi>.</p>
+            <div className="row-actions">
+                <Btn kind={on ? 'on' : 'primary'} onClick={() => setOn(!on)}>{on ? '● משדר לאתר · עצור' : 'התחל לשדר לאתר'}</Btn>
+                <Btn kind="ghost" onClick={() => { setOn(false); void Cloud.signOut(); }}>התנתק</Btn>
+            </div>
+            {status && <p className={status.startsWith('✓') ? 'meta' : 'err'} role="status">{status}</p>}
+        </>}
+    </Group>;
+}
+
+function Settings({ core, update, hist, onReset, site }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site?: React.ReactNode }) {
     const s = core.settings;
     const [t, setT] = useState('');
     const [confirm, setConfirm] = useState(false);
@@ -772,6 +801,7 @@ function Settings({ core, update, hist, onReset }: { core: L.Core; update: Updat
     const overDraft = core.heats.filter(h => h.status === 'draft' && L.heatCount(h) > s.capacity).length;
     const overQueued = core.heats.filter(h => h.status === 'approved' && L.heatCount(h) > s.capacity).length;
     return <>
+        {site}
         <Group label="תוספים" heading>
             <div className="field"><span className="flabel">תוסף קופה (הרשמה + אישור תשלום)</span>
                 <div className="chips" role="radiogroup" aria-label="תוסף קופה">
@@ -846,11 +876,27 @@ export function App() {
     // Data saved before the payment gate: groups without a paid flag become unpaid unless a paid submission made them.
     useEffect(() => { if (ready) update(L.migrateCore); }, [ready]);
 
+    // Public website: staff session + "broadcast" switch (per device). Publishes the board on every change.
+    const [session, setSession] = useState<Session | null>(null);
+    useEffect(() => Cloud.onSession(setSession), []);
+    const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v1', true);
+    const [pubStatus, setPubStatus] = useState('');
+    const sending = ready && !!session && broadcast;
+    useEffect(() => {
+        if (!sending) { setPubStatus(''); return; }
+        const t = setTimeout(() => {
+            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), hist)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
+        }, 300);
+        return () => clearTimeout(t);
+    }, [sending, core, hist]);
+    // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
+    useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]);
+
     const autoRef = useRef(auto); autoRef.current = auto;
     const start = (id: string) => update(c => L.startHeat(c, id, Date.now(), Date.now() % 100000, autoRef.current ? DEMO.speed : 5));
     const save = () => {
         const { core: next, result } = L.finishRun(coreRef.current, Date.now());
-        if (result) setHist(L.trimHistory([result, ...histRef.current]));
+        if (result) { setHist(L.trimHistory([result, ...histRef.current])); void Cloud.archiveHeats([result]); }
         update(() => next);
     };
     const setAuto = (b: boolean) => { autoRef.current = b; phase.current = { key: '', since: 0 }; setAutoRaw(b); };
@@ -935,6 +981,7 @@ export function App() {
                     {core.live && <button type="button" className={`onair${L.isPaused(core) ? ' paused' : ''}`} onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} {L.isPaused(core) ? 'עצור' : 'על המסלול'}</button>}
                     <span className="sim-badge" title="אין חיבור לשעון ההקפות, לשרת או למסכים של המסלול">סימולציה</span>
                     {cashier && <span className="addon-badge">תוסף קופה</span>}
+                    {sending && <span className="onair-tag">● משדר לאתר</span>}
                 </div>
             </header>
             <nav className="tabs" aria-label="מסכים" style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}>
@@ -946,10 +993,95 @@ export function App() {
             {ready && shownTab === 'heats' && <Heats core={core} update={update} />}
             {ready && shownTab === 'live' && <Live core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} act={boardActions} goHeats={goHeats} />}
             {ready && shownTab === 'history' && <History hist={hist} />}
-            {ready && shownTab === 'settings' && <Settings core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); setHist([]); }} />}
+            {ready && shownTab === 'settings' && <Settings site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); setHist([]); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
             {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} act={boardActions} ctlShown={ctlShown} setCtlShown={setCtlShown} />}
             {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות מקצה ${lastRes.heatNum}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
         </div>
     </FileCard>;
+}
+
+// ------------------------------------------------------------- public board
+/**
+ * The published board comes from a signed-in staff device, which already applied the payment gate.
+ * Boards published by the previous version carry no paid flag at all: show those groups (display only).
+ * Groups explicitly marked unpaid (paid: false) stay hidden.
+ */
+const publicCore = (core: L.Core): L.Core => ({ ...core, groups: core.groups.map(g => (typeof g.paid === 'boolean' ? g : { ...g, paid: true })) });
+
+/** The public website: read-only venue screen that follows the staff device in real time. No login. */
+export function PublicBoard() {
+    const [board, setBoard] = useState<Cloud.BoardPayload | null>(null);
+    const [conn, setConn] = useState('connecting');
+    const [loaded, setLoaded] = useState(false);
+    const [now, setNow] = useState(() => Date.now());
+    const [showHist, setShowHist] = useState(false);
+    useEffect(() => {
+        const take = (p: Cloud.BoardPayload) => setBoard(p);
+        void Cloud.fetchBoard().then(p => { if (p) take(p); setLoaded(true); });
+        return Cloud.subscribeBoard(take, setConn);
+    }, []);
+    useEffect(() => { const i = setInterval(() => setNow(Date.now()), 200); return () => clearInterval(i); }, []);
+    if (!loaded) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    if (!board) return <div className="dk pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהצוות יתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><StaffShield /></div>;
+    const hist = board.hist ?? [];
+    if (showHist) return <div className="dk pub-hist">
+        <div className="pub-hist-top"><Logo /><button type="button" className="kb primary" onClick={() => setShowHist(false)}>← חזרה ללוח החי</button></div>
+        <History hist={hist} />
+        <StaffShield />
+    </div>;
+    return <div className="dk pub">
+        <TrackScreen core={publicCore(board.core)} now={now} onClose={() => {}} />
+        <StaffShield />
+        <button type="button" className="pub-hbtn" onClick={() => setShowHist(true)}>היסטוריית מקצים ({hist.length})</button>
+        <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>
+    </div>;
+}
+
+/** Small shield in the corner of the public site: staff sign in here and go to the staff area. */
+function StaffShield() {
+    const [open, setOpen] = useState(false);
+    const go = () => { location.href = '?staff'; };
+    const click = async () => { const { data } = await Cloud.supabase.auth.getSession(); if (data.session) go(); else setOpen(true); };
+    return <>
+        <button type="button" className="pub-shield" aria-label="כניסת צוות" title="כניסת צוות" onClick={() => void click()}>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Zm0 2.2 6 2.2V11c0 4-2.6 7.8-6 8.9-3.4-1.1-6-4.9-6-8.9V6.4l6-2.2Zm0 3.3a2.5 2.5 0 0 0-1 4.8V15h2v-2.7a2.5 2.5 0 0 0-1-4.8Z" /></svg>
+        </button>
+        {open && <div className="pub-modal" role="dialog" aria-modal="true" aria-label="כניסת צוות" onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}>
+            <div className="pub-modal-box">
+                <div className="pub-modal-top"><h2 className="gate-title">כניסת צוות</h2><button type="button" className="kb ghost sm" aria-label="סגור" onClick={() => setOpen(false)}>✕</button></div>
+                <StaffLoginForm onDone={go} />
+            </div>
+        </div>}
+    </>;
+}
+
+// --------------------------------------------------------------- staff gate
+/** User name + password form for staff. Accounts are created by the owner in Supabase. */
+function StaffLoginForm({ onDone }: { onDone?: () => void }) {
+    const [email, setEmail] = useState('');
+    const [pw, setPw] = useState('');
+    const [err, setErr] = useState('');
+    const [busy, setBusy] = useState(false);
+    const login = async (e: React.FormEvent) => { e.preventDefault(); setBusy(true); setErr(''); const m = await Cloud.signIn(email.trim(), pw); setBusy(false); if (m) setErr('הכניסה נכשלה. בדוק שם משתמש וסיסמה.'); else onDone?.(); };
+    return <form className="gate" onSubmit={login}>
+        <label className="field"><span className="flabel">שם משתמש</span><input className="inp" type="text" autoCapitalize="none" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} dir="ltr" required /></label>
+        <label className="field"><span className="flabel">סיסמה</span><input className="inp" type="password" autoComplete="current-password" value={pw} onChange={e => setPw(e.target.value)} dir="ltr" required /></label>
+        <button type="submit" className="kb primary" disabled={busy}>{busy ? 'מתחבר…' : 'כניסה'}</button>
+        {err && <p className="err" role="alert">{err}</p>}
+    </form>;
+}
+
+/** The staff area (?staff): the marshal console opens only after a staff sign-in. */
+export function StaffGate({ children }: { children: React.ReactNode }) {
+    const [session, setSession] = useState<Session | null | undefined>(undefined);
+    useEffect(() => Cloud.onSession(setSession), []);
+    if (session === undefined) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    if (session) return <>{children}</>;
+    return <div className="dk pub-wait">
+        <Logo big />
+        <h1 className="gate-title">כניסת צוות</h1>
+        <StaffLoginForm />
+        <a className="pub-staff" href="./">למסך הצופים</a>
+    </div>;
 }
