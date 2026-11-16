@@ -4,59 +4,53 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 
 ## Source
 - src/logic.ts - pure logic: groups, planHeats, manual heats, cashier overrides on queued heats, driver names/karts, queue + call-up, live run (start/speed/finish/cancel), simulated TimingFeed, history.
-- tests/logic.test.ts - `npx tsx tests/logic.test.ts` (counted harness, 24 cases, exits 1 on failure).
-- src/App.tsx - core tabs: live/"מסלול" (queue, quick heat, venue screen with controls), heats, history, settings; add-on tabs (only when enabled): cashier, form. TrackScreen (switches by itself between race, call, next and empty), WallDisplay, CallDisplay, DriverEditor.
+- tests/logic.test.ts - `npx tsx tests/logic.test.ts` (counted harness, 16 cases, exits 1 on failure).
+- src/App.tsx - tabs: form (customer signup), cashier (pending payment + paid groups), heats, live (track and queue), history, settings. TrackScreen (switches by itself between race, call, next and empty), WallDisplay, CallDisplay, DriverEditor.
 - src/style.css - dark carbon theme with red/yellow accents; maps host --ds-* tokens to the dark palette.
 - shim/instinct-files.tsx + vite.config.ts + tsconfig.json + index.html + package.json - standalone run only.
 
-## Marshal console + professional redesign (gen 5)
-Owner (verbatim): "עכשיו תגיד לקלוד שלמרשלים יהיה כפתור למעלה של התחלה עצור ושמור ואפשרות לשנות שמות ולהתחיל ישר מקצא בלי שמות סבבה ושזה יאסף במסלול אתה מבין כמו עכשיו רק בעיצוב אחר שזה יהיה אופציה שלנו וגם שישפר את האתר זה לא הגיוני אני רוצה משהו מקצועי לא חרא"
-- Marshal console = the "מסלול" tab (landing page). Sticky top bar: state chip (ממתין/רץ/עצור/הסתיים), heat, clock, and
-  three big buttons:
-  - התחלה: starts the called/next heat; on a stopped heat it reads "המשך" and resumes.
-  - עצור: pauses the heat on track (LiveRun.pausedAt). Clock and simulated laps freeze.
-  - שמור: ends the heat into history (finishRun) and calls the next queued heat.
-  The venue screen carries the same three buttons at its TOP (hideable).
-- Name editing inline (NameEditor): next heat = names + karts; during the race = names only (karts locked).
-- Nameless heat: "התחל עכשיו בלי שמות" (quickStartHeat) creates a heat of N drivers and puts it on track at once;
-  drivers show as "נהג 1..n" until names are typed in (also during the race). Closed while the cashier add-on is on.
-- Professional shell: compact app bar (logo, "מערכת זמנים", סימולציה badge, on-air chip), flat dark surfaces, timing
-  tables (marshal + history) with tabular figures, wide two-column console on desktop (table | quick start, queue,
-  screen + collapsed demo tools).
-- STILL OPEN (owner to confirm): "שזה יאסף במסלול" - whether laps should be captured automatically on the track even
-  without names. Not designed for: lap times remain SIMULATED; no hardware capture is claimed.
-- Tests: 24 (22 previous unchanged + marshal start/stop/save + nameless quick start).
+## Public timing website (added 2026-11-15, owner chose a real public site)
+- Root URL = read-only public board (PublicBoard in App.tsx): call-up screen and live timing, no login.
+  Staff app = same URL with `?staff`, behind a staff sign-in gate (StaffGate). Login takes a user name;
+  `admin` maps to admin@dankarting.app (Cloud.staffEmail). The owner creates staff users in Supabase Auth.
+- Backend: Supabase project fqytpdapnvbpfonatopt, table public.live_board (row id 'main', data jsonb).
+  RLS: anyone can SELECT; only `authenticated` can UPDATE. Sign-ups must stay DISABLED in Supabase Auth so only
+  staff accounts the owner creates can sign in. Realtime publication includes the table. Setup SQL: docs/supabase-setup.sql.
+- src/cloud.ts: client (publishable key, public by design), publishBoard / fetchBoard / subscribeBoard / signIn.
+- Staff device: Settings -> "אתר צפייה ציבורי" -> staff sign-in -> "התחל לשדר לאתר". Every core change is pushed
+  (debounced 300 ms). Unpaid form submissions are stripped before sending (boardOf).
+- Viewers run the race clock locally from the race start time in the board (relies on network-synced device clocks).
+- Hosting: GitHub Pages from branch gh-pages (built dist/, vite base './').
 
-## Product hierarchy (gen 4): TIMING IS THE CORE, the cashier is an optional add-on
-Owner, verbatim: "אני רוצה שהמערכת תיהיה הזה של הזמן עם הכפתורים וההיסטוריה והאתר והזה של הקופה יהיה רק תוסף".
-- Core (always on): tabs "מסלול" (default; queue + quick "new heat" + venue screen), "מקצים", "היסטוריה", "הגדרות".
-- Cashier add-on: Settings -> "תוספים" -> "תוסף קופה" כבוי/פעיל (settings.cashierEnabled, OFF by default). When ON, the
-  "קופה" and "הרשמה" tabs appear after the core tabs.
-- Without the cashier: track staff add a heat by driver count (addTrackHeat, 1..capacity) straight into the queue; names
-  and karts are edited afterwards ("שמות וקארטים"). Such groups are origin 'track' and cleared to race; no payment concept.
-- With the cashier ON, addTrackHeat (and the core demo) is CLOSED, so every group must pass the cashier's pending -> "שולם"
-  confirmation. The payment gate is unchanged (planHeats/addToHeat/approveHeat/queueOf/call-up/start all check it).
-- Board controls (generic, minimal, on the venue screen itself): "קרא למסלול · מקצה N", "התחל מקצה N" (disabled with the
-  blocker reason), "בטל קריאה", during the race "סיים מקצה ושמור", after the finish "שמור ועבור למקצה הבא" (save + call the
-  next queued heat), and "הסתר כפתורים" (a small ⚙ brings them back) for a public screen.
-  Deliberately NOT built: timed heats (10/20 min), ticket types, prices, mixing rules - not confirmed.
-- One-click demo: without the cashier it uses demoTrackSetup (synthetic heats, no registrations); with it, demoSetup.
-- Tests: 22 (19 previous unchanged + timing core without cashier, track entry closed while cashier ON, core demo).
-- Layout: the control bar is inside the fitted screen; all fit checks pass with it. With 14 karts at 1280x720 rows are
-  ~30px (small text for a 720p TV across the room); hiding the controls gives that space back.
+- Public heat history: staff device publishes the last 30 finished heats (BoardPayload.hist); the public page has a
+  "היסטוריית מקצים" button (read-only list, search by name).
 
-## Payment gate (repair round, gen 2)
-- Every entry path needs an explicit cashier "שולם" before queue admission: customer form, cashier manual add (now a PENDING
-  submission by headcount, source 'cashier'), and "load demo registrations" (pending, source 'demo').
-- Durable state: Group.paid (+ paidAt). Set only by markPaid (submission) or confirmGroupPaid (explicit button).
-  addGroup is a low-level constructor and always creates an UNPAID group.
-- Checked downstream: planHeats and addToHeat skip/refuse unpaid; approveHeat and revalidate require heatPaid; queueOf excludes
-  any heat with an unpaid group, so callHeat / screenState (call-up) / startHeat can never reach it; startBlockers explains why.
-- The one-click auto-demo creates its OWN demo submissions and confirms only those; pre-existing pending submissions are untouched.
-- Saved data from before the gate: migrateCore on load; a group without the flag is paid only if a paid submission produced it,
-  otherwise it shows under "קבוצות בלי אישור תשלום" with a "שולם" button.
-- Tests: 19 cases (payment-gate regressions included). Older tests now confirm payment explicitly in their setup; the legacy-data
-  test now asserts an unpaid legacy heat stays off the call-up screen until confirmed.
+## Heat history: permanent archive + daily/weekly reset (owner, 2026-11-16)
+- Every finished heat is inserted into Supabase table public.heat_history (docs/heat-history.sql; anon read, staff insert only).
+  The staff device also back-fills its local history to the archive whenever a staff session starts.
+- "Current" history (History tab + public site) restarts at local midnight (settings.histReset 'day', default) or
+  Saturday night -> Sunday 00:00 ('week'). Nothing is deleted; History tab has "ארכיון מלא" (cloud + device, merged).
+- Device copy of history is capped at ~2 MB (was 14 KB).
+
+## Timed heats + manual start (owner, 2026-11-15)
+- Heat length: Settings.heatMinutes, default 10, minimum 10, chips 10/20, stepper up to 30. Fixed into live.durationMs at start.
+- When time is up each driver finishes the lap in progress, then is done (timedTiming). Board countdown = real time left.
+- A heat NEVER starts by itself: the autopilot only calls heats and saves results; staff press "התחל מקצה".
+
+## Ticket types and kart classes (owner, 2026-11-15)
+- Tickets: רגיל, זוגי, ליגה, מאסטר (יחיד renamed רגיל: on the board "ליחיד" means per person).
+- Prices (10 min): רגיל 87, ליגה 87 (owner: same as regular), זוגי 100 per two-seat kart (pairTickets, priced per 2 people), מאסטר 100.
+  20 min (settings.prices20): רגיל 100, ליגה 100 (owner: "20 דקות זה 100"); זוגי and מאסטר 20-min prices unknown.
+- Heat length per registration: form + pending item pick 10 or 20 min (Submission.minutes -> Group.minutes). 10- and 20-minute
+  groups never share a heat (fitsClass, canApprove, startBlockers); the heat runs minutesOfHeat.
+- Form: picking זוגי inserts a partner name row under it (second seat); switching away removes it. ליגה + מאסטר = fast karts (settings.fastTickets, editable in Settings).
+- Fast and regular never share a heat unless the group is marked family or the shift manager approves the mix (approveMix -> Heat.mixOk, tied to the exact groups; any change voids it) (Group.family): planner (fitsClass),
+  approve (canApprove) and start (startBlockers) all enforce it. Old saved tickets migrate (migrateTickets).
+- Cashier picks ticket + family on each pending registration; "שולם" = markPaidAndPlan (re-suggests drafts).
+- Customer form: ticket chips next to EACH name (Submission.tickets) + running price total (settings.prices, set in
+  Settings, display only). Cashier can change per-person tickets. A non-family registration with both fast and regular
+  tickets is split on payment into two groups ("<name> (מהירות)"). Prices are not set by default (owner to supply).
+- Open: זוגי is priced per pair and has 2 name rows, but still counts as 2 places in heat capacity (not 1 kart).
 
 ## Customer form -> payment -> queue (owner flow, supersedes cashier typing every name)
 - Tab "הרשמה": the customer fills ONE group name + participant names. No other fields (no phone, email, age, price).
@@ -94,23 +88,10 @@ Cashier adds groups -> heats are suggested or built by hand -> cashier approves 
 - Kart assignment: kartMode unset | cashier | staff. Cashier mode needs every kart chosen before approval. Staff mode shows "staff will assign" on the call screen until a kart is set, but does not block start (the simulation uses the suggested number). Still undecided: does the cashier assign karts by parking order or pick a kart for each name? No telemetry detection of parked karts.
 - The real call-up trigger is not decided. Demo timers are illustrative only. Screen only, no spoken announcements.
 - Timing is simulated. Seam: Passing[] -> lapsFromPassings() -> TimingFeed (see docs/TIMING-INTEGRATION.md). Decoder protocol, bridge, clock, transponder mapping and sector loops are open.
-- Persistence: device-local only (useLocalState). There is no shared backend, so a separate venue-screen device cannot follow along yet. The track screen is an overlay on the same device.
+- Persistence: device-local only (useLocalState) for the cashier data. Only the board is shared, one way, via Supabase (see Public timing website). The track screen is an overlay on the same device.
 - Queue order follows heat numbers. There is no drag-reorder; the cashier can call any queued heat out of order instead.
-- Logo: official wide logo (owner-verified URL on dankart.co.il) downloaded once and bundled as public/dan-karting-wide-logo.png; the app makes no external calls. Shown on a light plate because its tagline is black.
+- Official logo: not bundled or hot-linked (no external calls). A text wordmark stands in until a local copy is placed and LOGO_SRC is set.
 
 ## Known gotchas
 - Avoid dynamic native <select>: it crashed the hosted app (DOM removeChild). Only buttons and chips are used.
 - '@instinct/files' API is mirrored by the shim from usage only. Check it against the real package on delivery.
-
-## Screens fit the whole heat (repair round, gen 2)
-- Lineup and live board measure their free space (ResizeObserver) and size cards / rows so the whole heat fits with no scroll,
-  checked at 390x844, 1280x720 and 1920x1080 for 10 and 14 karts. Names wrap (never truncated); long names get a taller strip.
-- Row height is capped (phone 52px, desktop <1400px wide 64px, wider 84px), so a small field (2-3 karts) does not stretch;
-  fixed-height rows subtract the 3px row gaps. Font follows the row height AND the 7.5vw time column, and every timing
-  number (sectors, last, best, gap, laps) is white-space:nowrap, so digits never break onto a second line (gen 3).
-- Lap gaps are structured ({laps}|{ms}); the signed number is an isolated LTR run so "+1" never flips or overlaps in RTL.
-- The phone "00:00" frame is the estimated countdown reaching zero on the final lap, before the chequered flag: expected.
-
-## Project skill
-- .claude/skills/04-reverse-engineering/SKILL.md: owner-supplied reverse-engineering reference for future AMB decoder protocol work.
-  Knowledge only: its Python dependencies and shared plugin utilities are NOT installed.
