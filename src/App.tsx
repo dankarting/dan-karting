@@ -95,15 +95,9 @@ function MinuteChips({ value, onChange }: { value: number; onChange: (m: number)
 /** Form row: a participant, or the second seat of the two-seat kart above it (זוגי). */
 type FormRow = { name: string; ticket: string; partner?: boolean };
 
-function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
-    const [group, setGroup] = useState('');
+/** Participant rows: name + ticket chips per name; picking a pair ticket (זוגי) adds the second seat's name row. */
+function NameRows({ core, rows, setRows, minutes, onEdit }: { core: L.Core; rows: FormRow[]; setRows: (r: FormRow[]) => void; minutes: number; onEdit?: () => void }) {
     const def = core.settings.tickets[0] ?? '';
-    const blank = (): FormRow[] => [{ name: '', ticket: def }, { name: '', ticket: def }];
-    const [rows, setRows] = useState<FormRow[]>(blank);
-    const [minutes, setMinutes] = useState(10);
-    const [error, setError] = useState('');
-    const [sent, setSent] = useState<{ id: string; group: string; n: number; tickets: string[]; minutes: number } | null>(null);
-    // Picking זוגי adds a second name slot right under it (the second seat); picking anything else removes it.
     const setTicketAt = (i: number, t: string) => {
         const r = rows.slice();
         const hadPartner = r[i + 1]?.partner;
@@ -113,12 +107,34 @@ function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
         setRows(r);
     };
     const removeAt = (i: number) => setRows(rows.filter((_, j) => j !== i && !(j === i + 1 && rows[j].partner)));
-    const setAt = (i: number, v: string) => { setError(''); setRows(rows.map((x, j) => (j === i ? { ...x, name: v } : x))); };
+    const setAt = (i: number, v: string) => { onEdit?.(); setRows(rows.map((x, j) => (j === i ? { ...x, name: v } : x))); };
+    let num = 0;
+    return <>
+        <ol className="plain dlist names">
+            {rows.map((r, i) => { num++; return <li key={i} className={`drow trow${r.partner ? ' partner' : ''}`}>
+                <span className="meta nidx">{num}</span>
+                <input className="inp dname" value={r.name} onChange={e => setAt(i, e.target.value)} placeholder={r.partner ? 'שם השני ברכב הזוגי' : 'שם'} aria-label={`משתתף ${num}`} maxLength={24} />
+                {!r.partner && <button type="button" className="kb ghost sm" aria-label={`הסר משתתף ${num}`} disabled={rows.filter(x => !x.partner).length <= 1} onClick={() => removeAt(i)}>✕</button>}
+                {r.partner ? <span className="meta pair-note">↑ באותו רכב זוגי</span>
+                    : <TicketChips core={core} value={r.ticket} onChange={t => setTicketAt(i, t)} label={`כרטיס למשתתף ${num}`} minutes={minutes} />}
+            </li>; })}
+        </ol>
+        <div className="actions"><Btn small disabled={rows.length >= L.MAX_FORM_NAMES} onClick={() => setRows([...rows, { name: '', ticket: def }])}>+ משתתף</Btn></div>
+    </>;
+}
+
+function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
+    const [group, setGroup] = useState('');
+    const def = core.settings.tickets[0] ?? '';
+    const blank = (): FormRow[] => [{ name: '', ticket: def }, { name: '', ticket: def }];
+    const [rows, setRows] = useState<FormRow[]>(blank);
+    const [minutes, setMinutes] = useState(10);
+    const [error, setError] = useState('');
+    const [sent, setSent] = useState<{ id: string; group: string; n: number; tickets: string[]; minutes: number } | null>(null);
     const names = rows.map(r => r.name);
     const tix = rows.map(r => r.ticket);
     const chosen = rows.filter(r => r.name.trim()).map(r => r.ticket);
     const filled = chosen.length;
-    let num = 0;
     const submit = () => {
         let res: { id?: string; error?: string } = {};
         update(c => { const r = L.submitForm(c, group, names, Date.now(), tix, minutes); res = r; return r.core; });
@@ -148,18 +164,10 @@ function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
             </label>
             <div className="field"><span className="flabel">אורך המקצה</span><MinuteChips value={minutes} onChange={setMinutes} /></div>
             <div className="field"><span className="flabel">שמות המשתתפים ({filled})</span>
-                <ol className="plain dlist names">
-                    {rows.map((r, i) => { num++; return <li key={i} className={`drow trow${r.partner ? ' partner' : ''}`}>
-                        <span className="meta nidx">{num}</span>
-                        <input className="inp dname" value={r.name} onChange={e => setAt(i, e.target.value)} placeholder={r.partner ? 'שם השני ברכב הזוגי' : 'שם'} aria-label={`משתתף ${num}`} maxLength={24} />
-                        {!r.partner && <button type="button" className="kb ghost sm" aria-label={`הסר משתתף ${num}`} disabled={rows.filter(x => !x.partner).length <= 1} onClick={() => removeAt(i)}>✕</button>}
-                        {r.partner ? <span className="meta pair-note">↑ באותו רכב זוגי</span>
-                            : <TicketChips core={core} value={r.ticket} onChange={t => setTicketAt(i, t)} label={`כרטיס למשתתף ${num}`} minutes={minutes} />}
-                    </li>; })}
-                </ol>
-                <div className="actions"><Btn small disabled={rows.length >= L.MAX_FORM_NAMES} onClick={() => setRows([...rows, { name: '', ticket: def }])}>+ משתתף</Btn><Btn small onClick={sample}>מלא דוגמה</Btn></div>
+                <NameRows core={core} rows={rows} setRows={setRows} minutes={minutes} onEdit={() => setError('')} />
+                <div className="actions"><Btn small onClick={sample}>מלא דוגמה</Btn></div>
             </div>
-            <PriceLine core={core} tickets={chosen} minutes={minutes} />
+            <PriceLine core={core} tickets={chosen.length ? chosen : rows.map(r => r.ticket)} minutes={minutes} />
             {error && <div className="warn" role="alert">{error}</div>}
             <Btn kind="primary" onClick={submit}>שליחה לקופה</Btn>
         </div>
@@ -212,9 +220,23 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
     const [fam, setFam] = useState(false);
     const [note, setNote] = useState('');
     const split = useMemo(() => L.splitGroupIds(core.heats), [core.heats]);
-    const add = () => {
+    const def = core.settings.tickets[0] ?? '';
+    const [rows, setRows] = useState<FormRow[]>([{ name: '', ticket: def }, { name: '', ticket: def }]);
+    const [mins, setMins] = useState(10);
+    const [mErr, setMErr] = useState('');
+    const named = rows.filter(r => r.name.trim());
+    // With names: same path as a customer form that is paid at once (tickets per name, minutes, family, pair seats).
+    const addNamed = () => {
         const nm = name.trim() || `קבוצה ${core.groups.length + 1}`;
-        update(c => { const x = L.addGroup(c, { name: nm, size, ticket, keepTogether: keep, note: note.trim() }, Date.now()); const id = x.groups[x.groups.length - 1].id; return { ...x, groups: x.groups.map(g => (g.id === id ? { ...g, family: fam } : g)) }; });
+        let err = '';
+        update(c => { const r = L.submitForm(c, nm, rows.map(x => x.name), Date.now(), rows.map(x => x.ticket), mins); if (r.error || !r.id) { err = r.error ?? 'שגיאה'; return c; } return L.markPaidAndPlan(r.core, r.id, Date.now(), { family: fam, keepTogether: keep, minutes: mins }); });
+        if (err) { setMErr(err); return; }
+        setName(''); setNote(''); setRows([{ name: '', ticket: def }, { name: '', ticket: def }]); setMins(10); setMErr('');
+    };
+    const add = () => {
+        if (named.length > 0) { addNamed(); return; }
+        const nm = name.trim() || `קבוצה ${core.groups.length + 1}`;
+        update(c => { const x = L.addGroup(c, { name: nm, size, ticket, keepTogether: keep, note: note.trim() }, Date.now()); const id = x.groups[x.groups.length - 1].id; return { ...x, groups: x.groups.map(g => (g.id === id ? { ...g, family: fam, ...(mins >= 20 ? { minutes: 20 } : {}) } : g)) }; });
         setName(''); setNote(''); setSize(2); setKeep(true);
     };
     const loadDemo = () => update(c => {
@@ -240,13 +262,21 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
                 <label className="field"><span className="flabel">שם הקבוצה</span>
                     <input className="inp" value={name} onChange={e => setName(e.target.value)} placeholder="למשל: קבוצה 1" maxLength={40} />
                 </label>
-                <Stepper label="כמה משתתפים" value={size} min={1} max={30} onChange={setSize} />
-                <div className="field"><span className="flabel">מה נקנה</span>
-                    <div className="chips" role="radiogroup" aria-label="סוג כרטיס">
-                        {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={ticket === t} className={`chip${ticket === t ? ' sel' : ''}`} onClick={() => setTicket(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}</button>)}
-                        <button type="button" aria-pressed={fam} className={`chip${fam ? ' sel' : ''}`} onClick={() => setFam(!fam)}>משפחה</button>
-                    </div>
+                <div className="field"><span className="flabel">אורך המקצה</span><MinuteChips value={mins} onChange={setMins} /></div>
+                <div className="field"><span className="flabel">שמות המשתתפים ({named.length})</span>
+                    <NameRows core={core} rows={rows} setRows={setRows} minutes={mins} onEdit={() => setMErr('')} />
                 </div>
+                {named.length > 0 ? <PriceLine core={core} tickets={named.map(r => r.ticket)} minutes={mins} /> : <>
+                    <p className="meta">אפשר גם בלי שמות: משאירים את השורות ריקות ובוחרים רק כמה משתתפים וסוג כרטיס.</p>
+                    <Stepper label="כמה משתתפים (בלי שמות)" value={size} min={1} max={30} onChange={setSize} />
+                    <div className="field"><span className="flabel">מה נקנה</span>
+                        <div className="chips" role="radiogroup" aria-label="סוג כרטיס">
+                            {core.settings.tickets.map(t => <button key={t} type="button" role="radio" aria-checked={ticket === t} className={`chip${ticket === t ? ' sel' : ''}`} onClick={() => setTicket(t)}>{t}{L.isFastTicket(core, t) ? ' ⚡' : ''}</button>)}
+                        </div>
+                    </div>
+                </>}
+                <div className="chips"><button type="button" aria-pressed={fam} className={`chip${fam ? ' sel' : ''}`} onClick={() => setFam(!fam)}>משפחה (מותר לערבב מהירות ורגילות)</button></div>
+                {mErr && <div className="warn" role="alert">{mErr}</div>}
                 <div className="field"><span className="flabel">שיבוץ</span>
                     <div className="chips">
                         <button type="button" aria-pressed={keep} className={`chip${keep ? ' sel' : ''}`} onClick={() => setKeep(true)}>לשמור יחד</button>
