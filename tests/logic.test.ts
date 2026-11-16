@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import * as R from '../src/rentix';
 import * as L from '../src/logic';
 
 // Tiny counted harness: each test() is one named case; the run fails (exit 1) on any failure.
@@ -551,6 +552,31 @@ test('timed heats: 10 or 20 minutes, 10 is the minimum; lap in progress at time-
     // pure cut
     const cut = L.timedCut([{ key: 'a', laps: [400, 400, 400], total: 1200, best: 400, last: 400, finished: false }], 700);
     assert.deepEqual(cut[0].laps, [400, 400]); assert.equal(cut[0].finished, true);
+});
+
+test('RentiX feed (RMonitor) -> board: names, karts, laps, best, last, order; reset clears', () => {
+    const lines = [
+        '$I,"16:00:00.000","16 Nov 26"',
+        '$B,12,"מקצה 12"',
+        '$A,"5","5",1005,"שירה","כהן","",1',
+        '$COMP,"7","7",1,"Avi","","",""',
+        '$J,"5","00:00:41.200","00:00:41.200"',
+        '$J,"7","00:00:43.000","00:00:43.000"',
+        '$J,"5","00:00:39.900","00:01:21.100"',
+        '$G,1,"5",2,"00:01:21.100"',
+        '$G,2,"7",1,"00:00:43.000"',
+        '$H,1,"5",2,"00:00:39.900"',
+        '$F,9999,"00:08:30","16:01:30","00:01:30","Green "',
+    ];
+    const b = R.parseRMonitor(lines, 1);
+    assert.equal(b.run, 'מקצה 12'); assert.equal(b.flag, 'Green');
+    assert.equal(b.timeToGo, 510_000); assert.equal(b.raceTime, 90_000);
+    assert.deepEqual(b.rows.map(r => [r.pos, r.kart, r.name, r.laps]), [[1, 5, 'שירה כהן', 2], [2, 7, 'Avi', 1]]);
+    assert.equal(b.rows[0].best, 39_900); assert.equal(b.rows[0].last, 39_900); assert.equal(b.rows[0].total, 81_100);
+    assert.ok(R.extActive(b));
+    assert.equal(R.parseRMonitor([...lines, '$I,"16:10:00","16 Nov 26"'], 2).rows.length, 0, 'a reset starts a new session');
+    assert.deepEqual(R.splitRecord('$A,"a,b","x""y",3'), ['$A', 'a,b', 'x"y', '3']);
+    assert.equal(R.timeMs('01:02:03.5'), 3_723_500); assert.equal(R.timeMs(''), null);
 });
 
 console.log(`\n${passed} passed, ${failed.length} failed`);

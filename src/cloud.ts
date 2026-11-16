@@ -5,6 +5,7 @@
 // staff accounts created by the owner in the Supabase dashboard can sign in.
 import { createClient, type Session } from '@supabase/supabase-js';
 import type * as L from './logic';
+import type { ExtBoard } from './rentix';
 
 export const SUPABASE_URL = 'https://fqytpdapnvbpfonatopt.supabase.co';
 export const SUPABASE_KEY = 'sb_publishable_RANVYVqyzWASfwYdThRXtQ_SHfUjJa9';
@@ -17,12 +18,12 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 /** What the public page receives: only what the venue screen shows. Unpaid form submissions stay on the cashier device. */
 /** hist: finished heats (newest first) for the public history view. */
-export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[] };
+export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[]; ext?: ExtBoard | null };
 
 export const PUBLIC_HISTORY = 150;
-export function boardOf(core: L.Core, now: number, hist: L.Result[] = []): BoardPayload {
+export function boardOf(core: L.Core, now: number, hist: L.Result[] = [], ext: ExtBoard | null = null): BoardPayload {
     const { submissions: _unpaid, ...rest } = core;
-    return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY) };
+    return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
 }
 
 export async function publishBoard(payload: BoardPayload): Promise<string | null> {

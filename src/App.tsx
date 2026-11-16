@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Callout, Closing, CopyButton, FileCard, Group, useLocalState } from '@instinct/files';
 import * as L from './logic';
 import * as Cloud from './cloud';
+import * as R from './rentix';
 declare const __BUILD__: string;
 import type { Session } from '@supabase/supabase-js';
 
@@ -402,7 +403,7 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
     return <span className={`tb-lights ${state}`} aria-label={state === 'live' ? 'מקצה פעיל' : 'ממתין'}>{[0, 1, 2, 3].map(i => <i key={i} />)}</span>;
 }
 
-function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; controls?: React.ReactNode; onClose: () => void }) {
+function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; controls?: React.ReactNode; onClose: () => void; real?: boolean }) {
     useEscape(p.onClose);
     const [bodyRef, box] = useBox<HTMLDivElement>();
     // Fit every row of the heat (up to 14+) into the space left under the header: row height and font follow it.
@@ -431,7 +432,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
         </header>
         {p.controls}
-        <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>
+        {p.real ? <div className="wall-sim real">זמנים מהמסלול · RentiX</div> : <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>}
         <div className="tb-body" ref={bodyRef}>
         <ol className={`tb-rows${fit ? ' fit' : ''}`} style={rowsStyle}>
             <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>S1</span><span>S2</span><span>S3</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
@@ -577,11 +578,41 @@ function PublicViewChips({ core, update }: { core: L.Core; update: Update }) {
     </div>;
 }
 
+/** Live board from RentiX (real track timing, read-only). */
+function ExtWall({ ext, onClose, controls }: { ext: R.ExtBoard; onClose: () => void; controls?: React.ReactNode }) {
+    const lead = ext.rows[0];
+    const bAll = Math.min(...ext.rows.map(r => r.best ?? Infinity));
+    const rows: BoardRow[] = ext.rows.map((r, i) => ({ key: `${r.kart}-${i}`, pos: r.pos, kart: r.kart, label: r.name, laps: r.laps, best: r.best, last: r.last,
+        gap: gapOf(r.laps, r.total ?? 0, lead.laps, lead.total ?? 0, i === 0), finished: /finish|checker/i.test(ext.flag), isBest: r.best != null && r.best === bAll, sectors: null, gained: null }));
+    const done = /finish|checker/i.test(ext.flag);
+    return <WallDisplay title={ext.run || 'מקצה'} sub={done ? 'הסתיים · תוצאות' : `על המסלול · זמנים מהמסלול${ext.flag ? ` · ${ext.flag}` : ''}`} totalLaps={0} state={done ? 'done' : 'live'}
+        clock={ext.raceTime != null ? L.fmt(ext.raceTime) : undefined} countdown={ext.timeToGo ? mmss(ext.timeToGo) : undefined} rows={rows} onClose={onClose} controls={controls} real />;
+}
+
+/** Polls the RentiX bridge on this computer (public/rentix-bridge.ps1). Null when it is not running. */
+function useRentix(): { up: boolean; connected: boolean; error: string; ext: R.ExtBoard | null } {
+    const [st, setSt] = useState<{ up: boolean; connected: boolean; error: string; ext: R.ExtBoard | null }>({ up: false, connected: false, error: '', ext: null });
+    useEffect(() => {
+        let stop = false, timer: ReturnType<typeof setTimeout>;
+        const tick = async () => {
+            const b = await R.readBridge();
+            if (stop) return;
+            setSt(b ? { up: true, connected: b.connected, error: b.error, ext: R.parseRMonitor(b.lines, Date.now()) } : { up: false, connected: false, error: '', ext: null });
+            timer = setTimeout(tick, b ? 1000 : 5000);
+        };
+        void tick();
+        return () => { stop = true; clearTimeout(timer); };
+    }, []);
+    return st;
+}
+
 /** The venue screen: switches by itself between lineup (call / next / empty) and live timing, with its own controls. */
-function TrackScreen({ core, now, onClose, act, ctlShown = true, setCtlShown = () => {} }: { core: L.Core; now: number; onClose: () => void; act?: MarshalActions; ctlShown?: boolean; setCtlShown?: (b: boolean) => void }) {
+function TrackScreen({ core, now, onClose, act, ctlShown = true, setCtlShown = () => {}, ext }: { core: L.Core; now: number; onClose: () => void; act?: MarshalActions; ctlShown?: boolean; setCtlShown?: (b: boolean) => void; ext?: R.ExtBoard | null }) {
     const sc = L.screenState(core);
     // staff screens get the marshal controls; the public website (no act) shows the board only
     const controls = act ? <BoardControls core={core} now={now} act={act} shown={ctlShown} setShown={setCtlShown} /> : undefined;
+    // real timing from RentiX wins over the simulation while it has a heat
+    if (R.extActive(ext)) return <ExtWall ext={ext} onClose={onClose} />;
     if (sc.state === 'race' && sc.heat) {
         const timing = L.liveTiming(core, now);
         const done = L.allFinished(timing);
@@ -658,7 +689,7 @@ function MarshalTable({ rows, laps }: { rows: BoardRow[]; laps: number }) {
     </table>;
 }
 
-function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats }: LiveProps) {
+function Live({ rx, core, update, now, hist, auto, setAuto, openScreen, act, goHeats }: LiveProps & { rx: ReturnType<typeof useRentix> }) {
     const [editNames, setEditNames] = useState(false);
     const [editId, setEditId] = useState<string | null>(null);
     const [qn, setQn] = useState(8);
@@ -682,7 +713,14 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, act, goHeats
         setQMsg(res.error ?? 'נוסף לתור.');
     };
 
+    const ext = R.extActive(rx.ext) ? rx.ext : null;
     return <div className="mc">
+        {ext && <section className="mc-card mc-rx" aria-label="זמנים מהמסלול (RentiX)">
+            <header className="mc-card-h"><h2>{ext.run || 'מקצה'} · זמנים מהמסלול</h2><span className="mc-sim rx">RentiX · אמיתי</span></header>
+            <p className="meta">{ext.raceTime != null ? `זמן ${L.fmt(ext.raceTime)}` : ''}{ext.timeToGo ? ` · נותר ${mmss(ext.timeToGo)}` : ''}{ext.flag ? ` · ${ext.flag}` : ''}. המקצה מנוהל ב-RentiX; כאן רק מוצג, ונשלח למסך הלקוחות.</p>
+            <table className="mt"><thead><tr><th>מק׳</th><th>קארט</th><th className="mt-name">נהג</th><th>הקפות</th><th>אחרונה</th><th>מהירה</th></tr></thead>
+                <tbody>{ext.rows.map(r => <tr key={`${r.kart}-${r.pos}`} className={r.pos === 1 ? 'lead' : ''}><td className="mt-pos">{r.pos}</td><td><span className="mt-kart">{r.kart}</span></td><td className="mt-name">{r.name}</td><td className="mt-num">{r.laps}</td><td className="mt-num"><bdi>{L.fmt(r.last)}</bdi></td><td className="mt-num"><bdi>{L.fmt(r.best)}</bdi></td></tr>)}</tbody></table>
+        </section>}
         <div className="mc-bar" role="toolbar" aria-label="בקרת מרשל">
             <div className="mc-status">
                 <span className={`mc-state ${ms.state}`}>{STATE_LABEL[ms.state]}</span>
@@ -920,15 +958,17 @@ export function App() {
     useEffect(() => Cloud.onSession(setSession), []);
     const [broadcast, setBroadcast] = useLocalState<boolean>('dankart.broadcast.v2', true);
     const [pubStatus, setPubStatus] = useState('');
+    const rx = useRentix();
+    const extRef = useRef<R.ExtBoard | null>(null); extRef.current = R.extActive(rx.ext) ? rx.ext : null;
     const sending = ready && !!session && broadcast;
     useEffect(() => {
         if (!sending) { setPubStatus(''); return; }
         const t = setTimeout(() => {
-            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), hist)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
+            void Cloud.publishBoard(Cloud.boardOf(core, Date.now(), hist, extRef.current)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`));
         }, 300);
-        const beat = setInterval(() => void Cloud.publishBoard(Cloud.boardOf(coreRef.current, Date.now(), histRef.current)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`)), 10_000);
+        const beat = setInterval(() => void Cloud.publishBoard(Cloud.boardOf(coreRef.current, Date.now(), histRef.current, extRef.current)).then(e => setPubStatus(e ? `השידור נכשל: ${e}` : `✓ עודכן באתר ב-${new Date().toLocaleTimeString('he-IL')}`)), 10_000);
         return () => { clearTimeout(t); clearInterval(beat); };
-    }, [sending, core, hist]);
+    }, [sending, core, hist, rx.ext && JSON.stringify(rx.ext.rows) + rx.ext.flag + rx.ext.run + Math.floor((rx.ext.timeToGo ?? 0) / 5000)]);
     // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
     useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]);
 
@@ -1021,6 +1061,7 @@ export function App() {
                     {core.live && <button type="button" className={`onair${L.isPaused(core) ? ' paused' : ''}`} onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} {L.isPaused(core) ? 'עצור' : 'על המסלול'}</button>}
                     <span className="sim-badge" title="אין חיבור לשעון ההקפות, לשרת או למסכים של המסלול">סימולציה</span>
                     {cashier && <span className="addon-badge">תוסף קופה</span>}
+                    {rx.up && <span className={`onair-tag rx${rx.connected ? '' : ' bad'}`} title={rx.error}>{rx.connected ? (R.extActive(rx.ext) ? `● RentiX · ${rx.ext.run || 'מקצה'}` : '● RentiX מחובר') : '⚠ RentiX לא מחובר'}</span>}
                     {ready && <BroadcastChip session={!!session} on={broadcast} status={pubStatus} enable={() => setBroadcast(true)} openSettings={() => setTab('settings')} />}
                 </div>
             </header>
@@ -1031,11 +1072,11 @@ export function App() {
             {ready && shownTab === 'form' && <CustomerForm core={core} update={update} />}
             {ready && shownTab === 'cashier' && <Cashier core={core} update={update} goHeats={goHeats} />}
             {ready && shownTab === 'heats' && <Heats core={core} update={update} />}
-            {ready && shownTab === 'live' && <Live core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} act={boardActions} goHeats={goHeats} />}
+            {ready && shownTab === 'live' && <Live rx={rx} core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} act={boardActions} goHeats={goHeats} />}
             {ready && shownTab === 'history' && <History hist={hist} />}
             {ready && shownTab === 'settings' && <Settings site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); setHist([]); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
-            {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} act={boardActions} ctlShown={ctlShown} setCtlShown={setCtlShown} />}
+            {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} act={boardActions} ctlShown={ctlShown} setCtlShown={setCtlShown} ext={rx.ext} />}
             {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות מקצה ${lastRes.heatNum}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
         </div>
     </FileCard>;
@@ -1072,6 +1113,7 @@ export function PublicBoard() {
     </div>;
     return <div className="dk pub">
         {(() => {
+            if (R.extActive(board.ext) && now - board.sentAt < 60_000) return <ExtWall ext={board.ext} onClose={() => {}} />;
             const core = publicCore(board.core);
             const last = hist[0];
             // default: the customers see the heat. Between heats that is the latest results, not the queue.
