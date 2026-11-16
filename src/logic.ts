@@ -11,62 +11,55 @@ export type Group = {
     createdAt: number;
     /** Participant names from the customer form, in the order entered. Absent for groups the cashier added by count. */
     names?: string[];
-    /** Family: may share a heat with either kart class (fast and regular). Owner rule. */
-    family?: boolean;
-    /** Ticket per participant (same order as names), when chosen per person in the form. */
-    tickets?: string[];
-    /** Heat length this group paid for (10 / 20). Unset = the default in Settings. Groups of different lengths never share a heat. */
-    minutes?: number;
+    /** 'track' = created by track staff with the cashier add-on off (no payment concept). Absent = cashier path. */
+    origin?: 'track';
+    /**
+     * PAYMENT GATE ("cleared to race"). With the cashier add-on: true only after explicit cashier confirmation
+     * (markPaid / confirmGroupPaid). Without it: set by addTrackHeat, which is closed while the add-on is on.
+     * Queue, heat composition and call-up all check it. Simulated staff flag: no payment is processed.
+     */
+    paid?: boolean;
+    paidAt?: number;
 };
 
 /**
  * A customer's form submission: one group name + participant names. Nothing else is asked.
  * It waits at the cashier until staff confirm payment (simulated: no payment is processed here).
  */
-export type Submission = { id: string; groupName: string; names: string[]; createdAt: number; status: 'pending' | 'paid' | 'cancelled'; groupId?: string; groupIds?: string[];
-    /** Ticket per participant, same order as names (chosen by the customer in the form). */
-    tickets?: string[];
-    /** Heat length the customer chose (10 or 20). */
-    minutes?: number };
+export type Submission = {
+    id: string; groupName: string; names: string[]; createdAt: number; status: 'pending' | 'paid' | 'cancelled'; groupId?: string;
+    /** Where it came from: the customer form, the cashier's manual add (headcount, maybe no names), or the synthetic demo. */
+    source?: 'form' | 'cashier' | 'demo';
+    /** Headcount when no names were given (cashier manual add). */
+    size?: number;
+    ticket?: string; keepTogether?: boolean; note?: string;
+};
 
 export type Entry = { groupId: string; count: number };
 export type HeatStatus = 'draft' | 'approved' | 'done';
 export type DriverEdit = { name?: string; kart?: number };
-export type Heat = { id: string; num: number; status: HeatStatus; entries: Entry[]; drivers?: Record<string, DriverEdit>; called?: boolean;
-    /** Shift manager (אחמ"ש) approved mixing fast and regular karts for exactly these groups (sorted ids). Any change to the groups voids it. */
-    mixOk?: string };
+export type Heat = { id: string; num: number; status: HeatStatus; entries: Entry[]; drivers?: Record<string, DriverEdit>; called?: boolean };
 /** How karts get matched to drivers. Not decided by the venue yet, so 'unset' keeps an editable auto suggestion. */
 export type KartMode = 'unset' | 'cashier' | 'staff';
 
 export type Settings = {
     capacity: number; // configurable: the real limit is not confirmed (10 or 14 were both mentioned)
-    laps: number; // legacy lap-limited runs only; heats are now timed (heatMinutes)
-    /** Heat duration in minutes. 10 is the minimum (owner); 20 is the other common option. Default 10. */
-    heatMinutes?: number;
-    /** When the "current" heat history starts over: every night at 00:00 (day) or Saturday night -> Sunday 00:00 (week). The archive keeps everything. */
-    histReset?: HistReset;
+    laps: number;
     tickets: string[];
-    /** Ticket types that ride the FAST karts (owner: ליגה, מאסטר). They never share a heat with regular karts, unless family. */
-    fastTickets?: string[];
-    /** Price per ticket type in shekels. Set by the owner in Settings; unset = no price shown. Display only, nothing is charged. */
-    prices?: Record<string, number>;
-    /** Price per ticket type for a 20-minute heat. */
-    prices20?: Record<string, number>;
-    /** Ticket types where two participants share one kart and pay one price (זוגי). */
-    pairTickets?: string[];
     kartMode?: KartMode;
+    /**
+     * Optional CASHIER ADD-ON (registration form + payment confirmation). The timing system is the core and
+     * runs fully without it. Off by default. While it is ON, heats can only be filled through the cashier
+     * (pending -> paid), so the payment gate cannot be bypassed from the timing screens.
+     */
+    cashierEnabled?: boolean;
     /** Optional kart number -> transponder id. Unset = synthetic ids. Real mapping not known yet. */
     transponders?: Record<string, string>;
 };
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
-/** durationMs set = timed heat (fixed when the heat starts). Unset = legacy lap-limited run. */
-export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number };
-
-export const MIN_HEAT_MINUTES = 10;
-export const MAX_HEAT_MINUTES = 30;
-export const HEAT_MINUTE_OPTIONS = [10, 20];
-export const heatMinutesOf = (core: Core) => Math.min(MAX_HEAT_MINUTES, Math.max(MIN_HEAT_MINUTES, Math.round(core.settings.heatMinutes ?? MIN_HEAT_MINUTES)));
+/** pausedAt: set while a marshal has stopped the heat ("עצור"); the clock and simulated laps freeze. */
+export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; pausedAt?: number };
 
 export type Core = {
     settings: Settings;
@@ -78,97 +71,11 @@ export type Core = {
     submissions?: Submission[];
 };
 
-/** The venue's four ticket types (owner, 2026-11-15). ליגה and מאסטר ride the fast karts. */
-export const DEFAULT_TICKETS = ['רגיל', 'זוגי', 'ליגה', 'מאסטר'];
-export const DEFAULT_FAST_TICKETS = ['ליגה', 'מאסטר'];
-/** From the venue price board (photo, 2026-11-15), per 10-minute heat: karting 87, two-seat kart with adult 100 (per kart),
- *  Master 100. League has no price on the board yet. */
-export const DEFAULT_PRICES: Record<string, number> = { 'רגיל': 87, 'זוגי': 100, 'ליגה': 87, 'מאסטר': 100 };
-/** 20-minute heat (owner, 2026-11-15): 100. League is priced like regular. Others not given yet. */
-export const DEFAULT_PRICES20: Record<string, number> = { 'רגיל': 100, 'ליגה': 100 };
-/** Two-seat kart: two participants share one kart and one price ("רכב זוגי בליווי מבוגר"). */
-export const DEFAULT_PAIR_TICKETS = ['זוגי'];
-const OLD_DEFAULT_TICKETS = ['קארטינג', 'כרטיס משולב'];
-
-/** Saved data from before the four ticket types: swap the old placeholder tickets for the real ones. */
-export function migrateTickets(core: Core): Core {
-    let st = core.settings;
-    const t = st.tickets;
-    const old = t.length === OLD_DEFAULT_TICKETS.length && t.every((x, i) => x === OLD_DEFAULT_TICKETS[i]);
-    if (old) st = { ...st, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS] };
-    if (!st.fastTickets) st = { ...st, fastTickets: st.tickets.filter(x => DEFAULT_FAST_TICKETS.includes(x)) };
-    // "יחיד" on the price board means "per person"; the ticket is called "רגיל".
-    if (st.tickets.includes('יחיד') && !st.tickets.includes('רגיל')) st = { ...st, tickets: st.tickets.map(x => (x === 'יחיד' ? 'רגיל' : x)) };
-    if (!st.prices) st = { ...st, prices: Object.fromEntries(Object.entries(DEFAULT_PRICES).filter(([k]) => st.tickets.includes(k))) };
-    if (!st.pairTickets) st = { ...st, pairTickets: [...DEFAULT_PAIR_TICKETS] };
-    if (st.prices && st.prices['ליגה'] == null && st.tickets.includes('ליגה')) st = { ...st, prices: { ...st.prices, 'ליגה': DEFAULT_PRICES['ליגה'] } };
-    if (!st.prices20) st = { ...st, prices20: Object.fromEntries(Object.entries(DEFAULT_PRICES20).filter(([k]) => st.tickets.includes(k))) };
-    if (st === core.settings) return core;
-    const ren = (x: string) => (x === 'יחיד' ? 'רגיל' : x);
-    return { ...core, settings: st, groups: core.groups.map(g => ({ ...g, ticket: ren(g.ticket), tickets: g.tickets?.map(ren) })),
-        submissions: core.submissions?.map(x => ({ ...x, tickets: x.tickets?.map(ren) })) };
-}
-
-export type KartClass = 'fast' | 'regular';
-export const isFastTicket = (core: Core, ticket: string) => (core.settings.fastTickets ?? DEFAULT_FAST_TICKETS).includes(ticket);
-export const classOf = (core: Core, g: Group): KartClass => (isFastTicket(core, g.ticket) ? 'fast' : 'regular');
-
-/** Kart classes of the NON-family groups in a heat. Family groups fit with either class. */
-export function heatClasses(core: Core, h: Heat): Set<KartClass> {
-    const out = new Set<KartClass>();
-    for (const e of h.entries) { const g = core.groups.find(x => x.id === e.groupId); if (g && !g.family) out.add(classOf(core, g)); }
-    return out;
-}
-/** Fast and regular karts in the same heat, with a non-family group on each side. */
-export const mixesClasses = (core: Core, h: Heat) => heatClasses(core, h).size > 1;
-const mixKey = (h: Heat) => h.entries.map(e => e.groupId).sort().join(',');
-/** Mixed classes that still need the shift manager's OK (approval is tied to the exact groups in the heat). */
-export const mixNeedsOk = (core: Core, h: Heat) => mixesClasses(core, h) && h.mixOk !== mixKey(h);
-export const mixApproved = (core: Core, h: Heat) => mixesClasses(core, h) && h.mixOk === mixKey(h);
-/** Shift manager approves (or withdraws approval for) mixing fast and regular karts in this heat. */
-export function approveMix(core: Core, heatId: string, ok = true): Core {
-    return { ...core, heats: core.heats.map(h => (h.id === heatId ? { ...h, mixOk: ok ? mixKey(h) : undefined } : h)) };
-}
-/** Heat length of a group: what it paid for, else the default. */
-export const groupMinutes = (core: Core, g: Group) => g.minutes ?? heatMinutesOf(core);
-/** Heat lengths present in a heat (one value when consistent). */
-export function heatMinutesSet(core: Core, h: Heat): Set<number> {
-    const out = new Set<number>();
-    for (const e of h.entries) { const g = core.groups.find(x => x.id === e.groupId); if (g) out.add(groupMinutes(core, g)); }
-    return out;
-}
-/** Minutes this heat runs: its groups' length, else the default. */
-export const minutesOfHeat = (core: Core, h: Heat) => [...heatMinutesSet(core, h)][0] ?? heatMinutesOf(core);
-export const mixesMinutes = (core: Core, h: Heat) => heatMinutesSet(core, h).size > 1;
-
-/** Can group g join heat h without mixing fast and regular karts, or 10- and 20-minute groups? */
-export function fitsClass(core: Core, h: Heat, g: Group): boolean {
-    const mins = heatMinutesSet(core, h);
-    if (mins.size > 0 && !mins.has(groupMinutes(core, g))) return false;
-    if (g.family) return true;
-    const cls = heatClasses(core, h);
-    return cls.size === 0 || (cls.size === 1 && cls.has(classOf(core, g)));
-}
-
-/** Price total for a list of tickets. `missing` lists ticket types that have no price yet. Display only. */
-export function priceOf(core: Core, tickets: string[], minutes = 10): { total: number; missing: string[] } {
-    const p = (minutes >= 20 ? core.settings.prices20 : core.settings.prices) ?? {};
-    const pair = new Set(core.settings.pairTickets ?? DEFAULT_PAIR_TICKETS);
-    const count = new Map<string, number>(); tickets.forEach(t => count.set(t, (count.get(t) ?? 0) + 1));
-    let total = 0; const missing: string[] = [];
-    for (const [t, n] of count) {
-        const v = p[t];
-        if (typeof v !== 'number' || v <= 0) { missing.push(t); continue; }
-        total += v * (pair.has(t) ? Math.ceil(n / 2) : n); // two participants share one two-seat kart
-    }
-    return { total, missing };
-}
-
 export const MIN_CAP = 1;
 export const MAX_CAP = 30;
 
 export const initialCore = (): Core => ({
-    settings: { capacity: 10, laps: 8, tickets: [...DEFAULT_TICKETS], fastTickets: [...DEFAULT_FAST_TICKETS], prices: { ...DEFAULT_PRICES }, prices20: { ...DEFAULT_PRICES20 }, pairTickets: [...DEFAULT_PAIR_TICKETS] },
+    settings: { capacity: 10, laps: 8, tickets: ['קארטינג', 'כרטיס משולב'] },
     groups: [],
     heats: [],
     nextHeatNum: 1,
@@ -186,6 +93,13 @@ export const assignedOf = (heats: Heat[], groupId: string) =>
     heats.reduce((s, h) => s + h.entries.filter(e => e.groupId === groupId).reduce((a, e) => a + e.count, 0), 0);
 
 export const unassignedOf = (core: Core, g: Group) => g.size - assignedOf(core.heats, g.id);
+
+/** Payment gate: a group counts only after explicit cashier confirmation. Legacy groups without the flag are unpaid. */
+export const isPaid = (g: Group | undefined): boolean => g?.paid === true;
+/** Every group in this heat has been confirmed as paid. */
+export const heatPaid = (core: Core, h: Heat): boolean => h.entries.every(e => isPaid(core.groups.find(g => g.id === e.groupId)));
+/** Paid groups with people not yet placed in a heat: the waiting list the cashier composes heats from. */
+export const waitingGroups = (core: Core): Group[] => core.groups.filter(g => isPaid(g) && unassignedOf(core, g) > 0);
 
 /**
  * Rebuild draft heats from whatever is not yet in an approved/done heat.
@@ -212,6 +126,7 @@ export function planHeats(core: Core): Core {
     const maxFixed = fixed.reduce((m, h) => Math.max(m, h.num), 0);
     num = maxFixed + 1;
     for (const g of core.groups) {
+        if (!isPaid(g)) continue; // payment gate: unpaid groups are never planned into heats
         let left = g.size - assignedOf(fixed, g.id);
         if (left <= 0) continue;
         // keep-together group bigger than a heat: never split automatically.
@@ -219,7 +134,7 @@ export function planHeats(core: Core): Core {
         if (left > cap && g.keepTogether) continue;
         if (left <= cap || !g.keepTogether) {
             // whole group fits somewhere?
-            const whole = drafts.find(h => cap - heatCount(h) >= left && fitsClass(core, h, g));
+            const whole = drafts.find(h => cap - heatCount(h) >= left);
             if (left <= cap && whole) {
                 whole.entries.push({ groupId: g.id, count: left });
                 continue;
@@ -233,7 +148,7 @@ export function planHeats(core: Core): Core {
         for (const h of drafts) {
             if (left <= 0) break;
             const free = cap - heatCount(h);
-            if (free > 0 && !g.keepTogether && fitsClass(core, h, g)) {
+            if (free > 0 && !g.keepTogether) {
                 const take = Math.min(free, left);
                 h.entries.push({ groupId: g.id, count: take });
                 left -= take;
@@ -257,7 +172,7 @@ export function splitGroupIds(heats: Heat[]): Set<string> {
 
 /** Groups marked keep-together that cannot fit in one heat at the current capacity. */
 export const oversizedGroups = (core: Core) =>
-    core.groups.filter(g => g.keepTogether && g.size - assignedOf(core.heats.filter(h => h.status !== 'draft'), g.id) > core.settings.capacity);
+    core.groups.filter(g => isPaid(g) && g.keepTogether && g.size - assignedOf(core.heats.filter(h => h.status !== 'draft'), g.id) > core.settings.capacity);
 
 /** Explicit cashier choice: allow this group to be split over heats. */
 export const allowSplit = (core: Core, groupId: string): Core => ({
@@ -280,7 +195,7 @@ function revalidate(core: Core, heatIds: string[]): Core {
         ...core,
         heats: core.heats.map(h => {
             if (!heatIds.includes(h.id) || h.status !== 'approved') return h;
-            const ok = h.entries.length > 0 && !overCapacity(h, core.settings.capacity) && canApprove(core, h);
+            const ok = h.entries.length > 0 && !overCapacity(h, core.settings.capacity) && canApprove(core, h) && heatPaid(core, h);
             return ok ? h : { ...h, status: 'draft' as const, called: false };
         }),
     };
@@ -334,7 +249,7 @@ export function approveHeat(core: Core, heatId: string): Core {
     return {
         ...core,
         heats: core.heats.map(h =>
-            h.id === heatId && h.status === 'draft' && h.entries.length > 0 && !overCapacity(h, core.settings.capacity) && canApprove(core, h)
+            h.id === heatId && h.status === 'draft' && h.entries.length > 0 && !overCapacity(h, core.settings.capacity) && canApprove(core, h) && heatPaid(core, h)
                 ? { ...h, status: 'approved' as const }
                 : h,
         ),
@@ -351,9 +266,12 @@ export const unapproveHeat = (core: Core, heatId: string): Core => core.live?.he
 // The queue is just the approved heats in order. There are no time slots.
 // "Called" is a visual state for the on-site screen. It is a demo flag, not an operational rule.
 
-/** Approved heats waiting for the track, in heat-number order. The heat on track is not in the queue. */
+/**
+ * Approved heats waiting for the track, in heat-number order. The heat on track is not in the queue.
+ * Payment gate: a heat holding any unpaid group is never in the queue, so it can never be called or started.
+ */
 export const queueOf = (core: Core): Heat[] =>
-    core.heats.filter(h => h.status === 'approved' && h.id !== core.live?.heatId).sort((a, b) => a.num - b.num);
+    core.heats.filter(h => h.status === 'approved' && h.id !== core.live?.heatId && heatPaid(core, h)).sort((a, b) => a.num - b.num);
 export const calledHeat = (core: Core): Heat | undefined => queueOf(core).find(h => h.called);
 
 /** Mark a queued heat as called to the track. Only one heat is called at a time. Any queued heat may be called, not only the first. */
@@ -387,10 +305,9 @@ export function startBlockers(core: Core, h: Heat): string[] {
     if (h.status !== 'approved') out.push('המקצה לא מאושר');
     if (core.live && core.live.heatId !== h.id) out.push('מקצה אחר על המסלול');
     if (h.entries.length === 0) out.push('אין נהגים');
+    if (!heatPaid(core, h)) out.push('קבוצה שלא אושר לה תשלום');
     if (overCapacity(h, core.settings.capacity)) out.push(`מעל הקיבולת (${core.settings.capacity})`);
     if (kartConflicts(core, h).length) out.push('קארט כפול');
-    if (mixNeedsOk(core, h)) out.push('מכוניות מהירות ורגילות באותו מקצה בלי אישור אחמ״ש');
-    if (mixesMinutes(core, h)) out.push('קבוצות של 10 ו-20 דקות באותו מקצה');
     return out;
 }
 
@@ -400,49 +317,68 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
     if (!h || core.live || startBlockers(core, h).length) return core;
     return {
         ...core,
-        live: { heatId, t0: now, seed, speed, durationMs: minutesOfHeat(core, h) * 60_000 },
+        live: { heatId, t0: now, seed, speed },
         heats: core.heats.map(x => (x.id === heatId ? { ...x, called: false } : x)),
     };
 }
 
 /** Simulated ms on track. Speed multiplies wall time (demo only). */
-export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, (now - live.t0) * live.speed) : 0);
+export const elapsedOf = (live: LiveRun | null | undefined, now: number) =>
+    (live ? Math.max(0, ((live.pausedAt ?? now) - live.t0) * live.speed) : 0);
 
-/** Change simulation speed without jumping the clock. */
+/** Change simulation speed without jumping the clock (also while stopped). */
 export function setSpeed(core: Core, speed: number, now: number): Core {
     if (!core.live || speed <= 0) return core;
+    const ref = core.live.pausedAt ?? now;
     const el = elapsedOf(core.live, now);
-    return { ...core, live: { ...core.live, speed, t0: now - el / speed } };
+    return { ...core, live: { ...core.live, speed, t0: ref - el / speed } };
+}
+
+// ------------------------------------------------------- marshal controls (simulated)
+// התחלה / עצור / שמור. Stop = pause: the heat stays on track, clock frozen. Start resumes it.
+// Save ends the heat into history (finishRun). Nothing here talks to real timing hardware.
+
+export const isPaused = (core: Core) => !!core.live && core.live.pausedAt != null;
+
+/** "עצור": freeze the heat on track. */
+export const pauseRun = (core: Core, now: number): Core =>
+    core.live && core.live.pausedAt == null ? { ...core, live: { ...core.live, pausedAt: now } } : core;
+
+/** "התחלה" on a stopped heat: continue from where it froze. */
+export function resumeRun(core: Core, now: number): Core {
+    if (!core.live || core.live.pausedAt == null) return core;
+    const { pausedAt, ...rest } = core.live;
+    return { ...core, live: { ...rest, t0: core.live.t0 + (now - pausedAt) } };
+}
+
+export type MarshalState = 'idle' | 'running' | 'paused' | 'finished';
+/** What the marshal console shows and which buttons are live. */
+export function marshalState(core: Core, now: number): { state: MarshalState; heat?: Heat; target?: Heat } {
+    const h = runningHeat(core);
+    if (h) {
+        if (allFinished(liveTiming(core, now))) return { state: 'finished', heat: h };
+        return { state: isPaused(core) ? 'paused' : 'running', heat: h };
+    }
+    return { state: 'idle', target: calledHeat(core) ?? queueOf(core)[0] };
+}
+
+/**
+ * Nameless quick start: a heat of `count` drivers created and put on track at once (timing core, cashier
+ * add-on OFF). Drivers show as "נהג 1..n" until names are typed in, also during the race.
+ */
+export function quickStartHeat(core: Core, count: number, now: number, seed: number, speed = 1): { core: Core; heatId?: string; error?: string } {
+    if (core.live) return { core, error: 'יש מקצה על המסלול' };
+    const r = addTrackHeat(core, count, now);
+    if (r.error || !r.heatId) return r;
+    const started = startHeat(r.core, r.heatId, now, seed, speed);
+    return started === r.core ? { core, error: 'לא ניתן להתחיל' } : { core: started, heatId: r.heatId };
 }
 
 /** Timing for the heat on track. The feed defaults to the simulation; a real read-only feed would be passed here. */
 export function liveTiming(core: Core, now: number, feed?: TimingFeed): DriverTiming[] {
     const h = runningHeat(core);
     if (!h || !core.live) return [];
-    const drivers = driversOf(core, h), el = elapsedOf(core.live, now);
-    if (core.live.durationMs) return timedTiming((feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, TIMED_LAP_CAP), core.live.durationMs);
-    return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, core.settings.laps);
-}
-
-const TIMED_LAP_CAP = 200;
-
-/**
- * Timed heat: when the clock reaches the duration, each driver finishes the lap they are on and is then done
- * (the usual way to end a timed heat). Laps completed after that are dropped.
- */
-export function timedTiming(rows: DriverTiming[], durationMs: number): DriverTiming[] {
-    return rows.map(r => {
-        let t = 0; const laps: number[] = [];
-        for (const lap of r.laps) { laps.push(lap); t += lap; if (t >= durationMs) break; }
-        const done = t >= durationMs;
-        return { ...r, laps, total: laps.length ? t : 0, best: laps.length ? Math.min(...laps) : null, last: laps.length ? laps[laps.length - 1] : null, finished: done };
-    });
-}
-
-/** Time left on a timed heat (0 when over). Null for a legacy lap-limited run. */
-export function timeLeft(live: LiveRun | null | undefined, now: number): number | null {
-    if (!live?.durationMs) return null;
-    return Math.max(0, live.durationMs - elapsedOf(live, now));
+    return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(driversOf(core, h), elapsedOf(core.live, now), core.settings.laps);
 }
 
 /** End the run, mark the heat done and return its result for history. */
@@ -459,13 +395,34 @@ export function finishRun(core: Core, now: number, feed?: TimingFeed): { core: C
 /** Stop without saving: the heat goes back to the queue (not called). */
 export const cancelRun = (core: Core): Core => ({ ...core, live: null });
 
-export function addGroup(core: Core, g: Omit<Group, 'id' | 'createdAt'>, now: number): Core {
+/**
+ * Low-level group constructor. The new group is ALWAYS unpaid: it cannot be planned, queued or called
+ * until a cashier confirms payment. UI entry points do not call this directly; they create a pending
+ * submission (submitForm / submitCashier) and markPaid turns it into a paid group.
+ */
+export function addGroup(core: Core, g: Omit<Group, 'id' | 'createdAt' | 'paid' | 'paidAt'>, now: number): Core {
     const size = Math.max(1, Math.min(99, Math.floor(g.size)));
     return {
         ...core,
         seq: core.seq + 1,
-        groups: [...core.groups, { ...g, size, id: `g${core.seq}`, createdAt: now }],
+        groups: [...core.groups, { ...g, size, id: `g${core.seq}`, createdAt: now, paid: false }],
     };
+}
+
+/** Explicit cashier confirmation for an existing unpaid group (e.g. data saved before the payment gate). */
+export const confirmGroupPaid = (core: Core, groupId: string, now: number): Core => ({
+    ...core,
+    groups: core.groups.map(g => (g.id === groupId && !isPaid(g) ? { ...g, paid: true, paidAt: now } : g)),
+});
+
+/**
+ * Upgrade data saved by earlier versions. A group without the paid flag is paid only if a paid
+ * submission produced it; anything else (e.g. an old manual add) becomes unpaid and needs confirmation.
+ */
+export function migrateCore(core: Core): Core {
+    if (core.groups.every(g => typeof g.paid === 'boolean')) return core;
+    const paidIds = new Set((core.submissions ?? []).filter(s => s.status === 'paid' && s.groupId).map(s => s.groupId));
+    return { ...core, groups: core.groups.map(g => (typeof g.paid === 'boolean' ? g : { ...g, paid: paidIds.has(g.id) })) };
 }
 
 /** Removes a group unless it is in an approved/done heat. Drafts are cleaned. */
@@ -535,7 +492,6 @@ export const kartMode = (core: Core): KartMode => core.settings.kartMode ?? 'uns
 /** A heat may be approved when karts do not clash and, in cashier mode, every kart was chosen on purpose. */
 export function canApprove(core: Core, heat: Heat): boolean {
     if (kartConflicts(core, heat).length) return false;
-    if (mixNeedsOk(core, heat) || mixesMinutes(core, heat)) return false;
     if (kartMode(core) === 'cashier' && driversOf(core, heat).some(d => !d.kartSet)) return false;
     return true;
 }
@@ -566,7 +522,7 @@ export function createHeat(core: Core): Core {
 export function addToHeat(core: Core, groupId: string, heatId: string): Core {
     const h = core.heats.find(x => x.id === heatId);
     const g = core.groups.find(x => x.id === groupId);
-    if (!g || !editable(core, h)) return core;
+    if (!g || !isPaid(g) || !editable(core, h)) return core;
     const left = unassignedOf(core, g);
     const free = core.settings.capacity - heatCount(h);
     if (left <= 0 || free <= 0) return core;
@@ -743,8 +699,6 @@ export type Result = {
     at: number;
     simulated: boolean;
     laps: number;
-    /** Timed heat length in minutes (unset for legacy lap-limited runs). */
-    minutes?: number;
     rows: { pos: number; kart: number; label: string; laps: number[]; best: number | null; total: number }[];
 };
 
@@ -756,8 +710,7 @@ export function resultOf(core: Core, heat: Heat, timing: DriverTiming[], now: nu
         heatNum: heat.num,
         at: now,
         simulated,
-        laps: core.live?.durationMs ? Math.max(0, ...ranked.map(t => t.laps.length)) : core.settings.laps,
-        minutes: core.live?.durationMs ? Math.round(core.live.durationMs / 60_000) : undefined,
+        laps: core.settings.laps,
         rows: ranked.map((t, i) => {
             const d = drivers.find(x => x.key === t.key)!;
             return { pos: i + 1, kart: d.kart, label: d.label, laps: t.laps, best: t.best, total: t.total };
@@ -766,25 +719,7 @@ export function resultOf(core: Core, heat: Heat, timing: DriverTiming[], now: nu
 }
 
 /** Keep history under the per-key storage budget (16 KiB), dropping the oldest. */
-export type HistReset = 'day' | 'week';
-export const histResetOf = (core: Core): HistReset => core.settings.histReset ?? 'day';
-/** Start of the current history period, local time: today 00:00, or the last Sunday 00:00 (the Israeli week starts on Sunday). */
-export function periodStart(now: number, mode: HistReset): number {
-    const d = new Date(now); d.setHours(0, 0, 0, 0);
-    if (mode === 'week') d.setDate(d.getDate() - d.getDay());
-    return d.getTime();
-}
-export const currentPeriod = (hist: Result[], now: number, mode: HistReset) => { const t = periodStart(now, mode); return hist.filter(r => r.at >= t); };
-/** Same heat result seen twice (local + cloud archive) has the same key. */
-export const resultKey = (r: Result) => `${r.heatId}-${r.at}`;
-export function mergeResults(...lists: Result[][]): Result[] {
-    const m = new Map<string, Result>();
-    for (const l of lists) for (const r of l) if (!m.has(resultKey(r))) m.set(resultKey(r), r);
-    return [...m.values()].sort((a, b) => b.at - a.at);
-}
-
-/** Device copy of the history (the full archive lives in the cloud). ~2 MB keeps months of heats in browser storage. */
-export function trimHistory(h: Result[], maxBytes = 2_000_000): Result[] {
+export function trimHistory(h: Result[], maxBytes = 14000): Result[] {
     let out = h;
     while (out.length > 1 && JSON.stringify(out).length > maxBytes) out = out.slice(0, -1);
     return out;
@@ -792,10 +727,10 @@ export function trimHistory(h: Result[], maxBytes = 2_000_000): Result[] {
 
 export const demoGroups: { name: string; size: number; ticket: number; keepTogether: boolean; note: string }[] = [
     { name: 'משפחת כהן (דמו)', size: 4, ticket: 0, keepTogether: true, note: '' },
-    { name: 'יום הולדת (דמו)', size: 7, ticket: 0, keepTogether: true, note: '' },
-    { name: 'דני ושני (דמו)', size: 2, ticket: 1, keepTogether: true, note: '' },
-    { name: 'ליגת חמישי (דמו)', size: 5, ticket: 2, keepTogether: true, note: '' },
-    { name: 'חברים (דמו)', size: 3, ticket: 3, keepTogether: false, note: '' },
+    { name: 'יום הולדת (דמו)', size: 7, ticket: 1, keepTogether: true, note: '' },
+    { name: 'דני ושני (דמו)', size: 2, ticket: 0, keepTogether: true, note: '' },
+    { name: 'משפחת לוי (דמו)', size: 5, ticket: 1, keepTogether: true, note: '' },
+    { name: 'חברים (דמו)', size: 3, ticket: 0, keepTogether: false, note: '' },
     { name: 'צוות עבודה (דמו)', size: 12, ticket: 1, keepTogether: true, note: 'גדול מהקיבולת, יפוצל' },
 ];
 
@@ -844,18 +779,17 @@ export function fillDemoNames(core: Core): Core {
  */
 export function demoSetup(core: Core, now: number): Core {
     let c = core;
-    // demo groups arrive the same way real ones would: customer form -> (simulated) payment -> queue
-    if (c.groups.length === 0 && pendingOf(c).length === 0) {
-        let n = 0;
-        demoGroups.forEach(g => {
-            const names = Array.from({ length: g.size }, () => DEMO_NAMES[n++ % DEMO_NAMES.length]);
-            const r = submitForm(c, g.name, names, now);
-            if (r.id) c = markPaid(r.core, r.id, now, { keepTogether: g.keepTogether, ticket: c.settings.tickets[g.ticket] });
-        });
+    // SYNTHETIC AUTO-DEMO, kept separate from real entries: it creates its own demo submissions
+    // (source 'demo') and confirms payment ONLY for those. Pre-existing pending submissions are
+    // never touched and stay out of the queue until a cashier confirms them.
+    if (!c.groups.some(isPaid)) {
+        const r = loadDemoRegistrations(c, now);
+        c = r.core;
+        const meta = new Map(r.ids.map((id, i) => [id, demoGroups[i]]));
+        for (const id of r.ids) { const g = meta.get(id)!; c = markPaid(c, id, now, { keepTogether: g.keepTogether, ticket: c.settings.tickets[g.ticket] }); }
     }
-    for (const s of pendingOf(c)) c = markPaid(c, s.id, now);
     for (const g of oversizedGroups(c)) c = allowSplit(c, g.id);
-    if (c.groups.some(g => unassignedOf(c, g) > 0)) c = planHeats(c);
+    if (waitingGroups(c).length > 0) c = planHeats(c);
     c = fillDemoNames(c);
     for (const h of c.heats) if (h.status === 'draft') c = approveHeat(c, h.id);
     return c;
@@ -870,56 +804,103 @@ export const MAX_FORM_NAMES = 30;
 export const pendingOf = (core: Core): Submission[] => (core.submissions ?? []).filter(s => s.status === 'pending');
 
 /** Validate and store a form. Returns the new id, or an error (Hebrew) and the unchanged core. */
-export function submitForm(core: Core, groupName: string, names: string[], now: number, tickets?: string[], minutes?: number): { core: Core; id?: string; error?: string } {
+export function submitForm(core: Core, groupName: string, names: string[], now: number, source: 'form' | 'demo' = 'form'): { core: Core; id?: string; error?: string } {
     const gn = groupName.trim().slice(0, 40);
-    const keep = names.map((x, i) => ({ n: x.trim().slice(0, 24), t: tickets?.[i] })).filter(x => x.n);
-    const ns = keep.map(x => x.n);
-    const ts = tickets ? keep.map(x => (x.t && core.settings.tickets.includes(x.t) ? x.t : core.settings.tickets[0] ?? '')) : undefined;
+    const ns = names.map(x => x.trim().slice(0, 24)).filter(Boolean);
     if (!gn) return { core, error: 'חסר שם קבוצה' };
     if (ns.length === 0) return { core, error: 'צריך לפחות משתתף אחד' };
     if (ns.length > MAX_FORM_NAMES) return { core, error: `עד ${MAX_FORM_NAMES} משתתפים בטופס אחד` };
     const id = `s${core.seq}`;
-    return { core: { ...core, seq: core.seq + 1, submissions: [...(core.submissions ?? []), { id, groupName: gn, names: ns, createdAt: now, status: 'pending', ...(ts ? { tickets: ts } : {}), ...(minutes ? { minutes: minutes >= 20 ? 20 : 10 } : {}) }] }, id };
+    return { core: { ...core, seq: core.seq + 1, submissions: [...(core.submissions ?? []), { id, groupName: gn, names: ns, createdAt: now, status: 'pending', source }] }, id };
 }
+
+/**
+ * Cashier's manual add (walk-in, no form). Creates a PENDING submission by headcount, like a form,
+ * so it goes through the same explicit payment confirmation before it can reach the queue.
+ */
+export function submitCashier(core: Core, g: { name: string; size: number; ticket: string; keepTogether: boolean; note: string }, now: number): { core: Core; id?: string; error?: string } {
+    const gn = g.name.trim().slice(0, 40);
+    const size = Math.floor(g.size);
+    if (!gn) return { core, error: 'חסר שם קבוצה' };
+    if (!(size >= 1) || size > MAX_FORM_NAMES) return { core, error: `בין 1 ל־${MAX_FORM_NAMES} משתתפים` };
+    const id = `s${core.seq}`;
+    const sub: Submission = { id, groupName: gn, names: [], size, ticket: g.ticket, keepTogether: g.keepTogether, note: g.note.trim().slice(0, 80), createdAt: now, status: 'pending', source: 'cashier' };
+    return { core: { ...core, seq: core.seq + 1, submissions: [...(core.submissions ?? []), sub] }, id };
+}
+
+/** Synthetic demo registrations (invented names). They arrive PENDING like real ones; nothing is paid here. */
+export function loadDemoRegistrations(core: Core, now: number): { core: Core; ids: string[] } {
+    let c = core; let n = 0; const ids: string[] = [];
+    for (const g of demoGroups) {
+        const names = Array.from({ length: g.size }, () => DEMO_NAMES[n++ % DEMO_NAMES.length]);
+        const r = submitForm(c, g.name, names, now, 'demo');
+        if (r.id) { c = r.core; ids.push(r.id); }
+    }
+    return { core: c, ids };
+}
+
+/** Size of the group a submission becomes: its names, or the cashier's headcount. */
+export const submissionSize = (s: Submission) => s.names.length || s.size || 0;
 
 /** Staff confirm payment (simulated). The group enters the waiting list for heats with its names. */
-export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[]; minutes?: number } = {}): Core {
+export function markPaid(core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string } = {}): Core {
     const s = (core.submissions ?? []).find(x => x.id === subId);
     if (!s || s.status !== 'pending') return core;
-    const fallback = opts.ticket ?? core.settings.tickets[0] ?? '';
-    const per = s.names.map((_, i) => opts.tickets?.[i] ?? (opts.ticket ? opts.ticket : s.tickets?.[i]) ?? fallback);
-    const family = !!opts.family;
-    // Fast and regular karts may not race together unless family: a mixed non-family registration becomes two groups.
-    const fastIdx = per.map((t, i) => (isFastTicket(core, t) ? i : -1)).filter(i => i >= 0);
-    const parts: { name: string; idx: number[] }[] = family || fastIdx.length === 0 || fastIdx.length === per.length
-        ? [{ name: s.groupName, idx: per.map((_, i) => i) }]
-        : [{ name: s.groupName, idx: per.map((_, i) => i).filter(i => !fastIdx.includes(i)) }, { name: `${s.groupName} (מהירות)`, idx: fastIdx }];
-    let c = core; const ids: string[] = [];
-    for (const part of parts) {
-        const ts = part.idx.map(i => per[i]);
-        const main = mostCommon(ts) ?? fallback;
-        c = addGroup(c, { name: part.name, size: part.idx.length, ticket: main, keepTogether: opts.keepTogether ?? true, note: '' }, now);
-        const g = c.groups[c.groups.length - 1];
-        ids.push(g.id);
-        const minutes = opts.minutes ?? s.minutes;
-        c = { ...c, groups: c.groups.map(x => (x.id === g.id ? { ...x, names: part.idx.map(i => s.names[i]), family, tickets: ts, ...(minutes ? { minutes } : {}) } : x)) };
-    }
-    return { ...c, submissions: (core.submissions ?? []).map(x => (x.id === subId ? { ...x, status: 'paid' as const, groupId: ids[0], groupIds: ids, tickets: per } : x)) };
+    const size = submissionSize(s);
+    if (size < 1) return core;
+    const withGroup = addGroup(core, { name: s.groupName, size, ticket: opts.ticket ?? s.ticket ?? core.settings.tickets[0] ?? '', keepTogether: opts.keepTogether ?? s.keepTogether ?? true, note: s.note ?? '' }, now);
+    const g = withGroup.groups[withGroup.groups.length - 1];
+    return {
+        ...withGroup,
+        // the explicit cashier confirmation is what sets the durable paid flag
+        groups: withGroup.groups.map(x => (x.id === g.id ? { ...x, ...(s.names.length ? { names: [...s.names] } : {}), paid: true, paidAt: now } : x)),
+        submissions: (core.submissions ?? []).map(x => (x.id === subId ? { ...x, status: 'paid' as const, groupId: g.id } : x)),
+    };
 }
-
-function mostCommon(xs: string[]): string | undefined {
-    const m = new Map<string, number>(); xs.forEach(x => m.set(x, (m.get(x) ?? 0) + 1));
-    return [...m].sort((a, b) => b[1] - a[1])[0]?.[0];
-}
-
-/** Paid -> into the queue AND re-suggest the draft heats, so heats build themselves as people pay. Approved heats are untouched. */
-export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { keepTogether?: boolean; ticket?: string; family?: boolean; tickets?: string[]; minutes?: number } = {}): Core => {
-    const next = markPaid(core, subId, now, opts);
-    return next === core ? core : planHeats(next);
-};
 
 /** Drop a pending submission (customer left, duplicate...). Paid ones are handled as groups. */
 export const cancelSubmission = (core: Core, subId: string): Core => ({
     ...core,
     submissions: (core.submissions ?? []).map(x => (x.id === subId && x.status === 'pending' ? { ...x, status: 'cancelled' as const } : x)),
 });
+
+// ------------------------------------------------ timing core: heats without the cashier add-on
+// The core system is timing: heats, call-up/live/results board with its controls, history.
+// With the cashier add-on OFF, track staff create a heat directly by driver count; names and karts
+// are edited afterwards. No payment concept exists in that mode. With the add-on ON this entry is
+// closed, so every group must pass the cashier's payment confirmation first.
+
+export const cashierOn = (core: Core) => core.settings.cashierEnabled === true;
+
+/**
+ * Track staff create a heat of `count` drivers straight into the queue (approved). Optional names fill
+ * the drivers in order. Refused while the cashier add-on is on, or when count is outside 1..capacity.
+ */
+export function addTrackHeat(core: Core, count: number, now: number, names: string[] = []): { core: Core; heatId?: string; error?: string } {
+    if (cashierOn(core)) return { core, error: 'תוסף הקופה פעיל: מקצים נכנסים רק דרך הקופה' };
+    const n = Math.floor(count);
+    if (!(n >= 1) || n > core.settings.capacity) return { core, error: `בין 1 ל־${core.settings.capacity} נהגים` };
+    let c = addGroup(core, { name: 'נהג', size: n, ticket: '', keepTogether: true, note: '' }, now);
+    const gid = c.groups[c.groups.length - 1].id;
+    const clean = names.map(x => x.trim().slice(0, 24)).filter(Boolean).slice(0, n);
+    // cleared for the track by the track staff themselves: there is no cashier in this mode
+    c = { ...c, groups: c.groups.map(g => (g.id === gid ? { ...g, paid: true, paidAt: now, origin: 'track' as const, ...(clean.length ? { names: clean } : {}) } : g)) };
+    c = createHeat(c);
+    const heatId = c.heats[c.heats.length - 1].id;
+    c = addToHeat(c, gid, heatId);
+    c = approveHeat(c, heatId);
+    return { core: c, heatId };
+}
+
+/** Synthetic demo for the timing core alone: a few heats of invented names, no registrations, no cashier. */
+export function demoTrackSetup(core: Core, now: number, sizes: number[] = [8, 6, 10, 5]): Core {
+    let c = core; let k = 0;
+    for (const size of sizes) {
+        const n = Math.min(size, c.settings.capacity);
+        const names = Array.from({ length: n }, () => DEMO_NAMES[k++ % DEMO_NAMES.length]);
+        const r = addTrackHeat(c, n, now, names);
+        if (r.error) break;
+        c = r.core;
+    }
+    return c;
+}

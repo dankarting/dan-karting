@@ -8,9 +8,18 @@ function test(name: string, fn: () => void) {
     catch (e) { failed.push(name); console.log(`  FAIL ${name}\n       ${(e as Error).message.split('\n')[0]}`); }
 }
 
+/**
+ * Test setup for a group that already passed the payment gate: the low-level constructor
+ * (always unpaid) followed by the explicit cashier confirmation.
+ */
+function addPaid(c: L.Core, g: Parameters<typeof L.addGroup>[1], now: number): L.Core {
+    const n = L.addGroup(c, g, now);
+    return L.confirmGroupPaid(n, n.groups[n.groups.length - 1].id, now);
+}
+
 test('planning, capacity, approve, move, simulated feed (original suite)', () => {
     let c = L.initialCore();
-    L.demoGroups.forEach((g, i) => { c = L.addGroup(c, { ...g, ticket: c.settings.tickets[g.ticket] }, i); });
+    L.demoGroups.forEach((g, i) => { c = addPaid(c, { ...g, ticket: c.settings.tickets[g.ticket] }, i); });
     c = L.planHeats(c);
     const cap = c.settings.capacity;
     // no heat over capacity, every person placed exactly once
@@ -61,8 +70,8 @@ test('planning, capacity, approve, move, simulated feed (original suite)', () =>
 
 test('manual heats + driver names/karts (original suite)', () => {
     let m = L.initialCore();
-    m = L.addGroup(m, { name: 'א', size: 4, ticket: '', keepTogether: true, note: '' }, 1);
-    m = L.addGroup(m, { name: 'ב', size: 7, ticket: '', keepTogether: true, note: '' }, 2);
+    m = addPaid(m, { name: 'א', size: 4, ticket: '', keepTogether: true, note: '' }, 1);
+    m = addPaid(m, { name: 'ב', size: 7, ticket: '', keepTogether: true, note: '' }, 2);
     m = L.createHeat(m); m = L.createHeat(m);
     assert.equal(m.heats.length, 2); assert.notEqual(m.heats[0].num, m.heats[1].num);
     const [h1, h2] = m.heats;
@@ -93,7 +102,7 @@ test('manual heats + driver names/karts (original suite)', () => {
     m = L.setDriver(m, h1.id, 'g1-1', { kart: 0 });
     assert.ok(!L.driversOf(m, m.heats[0])[1].kartSet);
     // old saved data without new fields still works
-    const old = L.planHeats({ ...L.initialCore(), groups: [{ id: 'g1', name: 'x', size: 2, ticket: '', keepTogether: true, note: '', createdAt: 1 }] });
+    const old = L.planHeats({ ...L.initialCore(), groups: [{ id: 'g1', name: 'x', size: 2, ticket: '', keepTogether: true, note: '', createdAt: 1, paid: true }] });
     assert.equal(L.driversOf(old, old.heats[0]).length, 2);
     // remove back to queue
     m = L.removeFromHeat(m, 'g1', h1.id);
@@ -102,8 +111,8 @@ test('manual heats + driver names/karts (original suite)', () => {
 
 test('queue + call-up (original suite)', () => {
     let q = L.initialCore();
-    q = L.addGroup(q, { name: 'א', size: 3, ticket: '', keepTogether: true, note: '' }, 1);
-    q = L.addGroup(q, { name: 'ב', size: 2, ticket: '', keepTogether: true, note: '' }, 2);
+    q = addPaid(q, { name: 'א', size: 3, ticket: '', keepTogether: true, note: '' }, 1);
+    q = addPaid(q, { name: 'ב', size: 2, ticket: '', keepTogether: true, note: '' }, 2);
     q = L.createHeat(q); q = L.createHeat(q);
     q = L.addToHeat(q, 'g1', q.heats[0].id); q = L.addToHeat(q, 'g2', q.heats[1].id);
     assert.equal(L.screenState(q, null).state, 'empty'); // drafts are not in the queue
@@ -121,9 +130,9 @@ test('queue + call-up (original suite)', () => {
 /** Two small groups, each in its own approved heat. */
 function twoQueued() {
     let q = L.initialCore();
-    q = L.addGroup(q, { name: 'א', size: 3, ticket: '', keepTogether: true, note: '' }, 1);
-    q = L.addGroup(q, { name: 'ב', size: 2, ticket: '', keepTogether: true, note: '' }, 2);
-    q = L.addGroup(q, { name: 'ג', size: 4, ticket: '', keepTogether: true, note: '' }, 3);
+    q = addPaid(q, { name: 'א', size: 3, ticket: '', keepTogether: true, note: '' }, 1);
+    q = addPaid(q, { name: 'ב', size: 2, ticket: '', keepTogether: true, note: '' }, 2);
+    q = addPaid(q, { name: 'ג', size: 4, ticket: '', keepTogether: true, note: '' }, 3);
     q = L.createHeat(q); q = L.createHeat(q);
     q = L.addToHeat(q, 'g1', q.heats[0].id); q = L.addToHeat(q, 'g2', q.heats[1].id);
     q = L.approveHeat(q, q.heats[0].id); q = L.approveHeat(q, q.heats[1].id);
@@ -221,8 +230,8 @@ test('cashier kart mode: adding drivers without karts to an approved heat un-app
 
 test('moving a group carries its driver names and karts', () => {
     let m = L.initialCore();
-    m = L.addGroup(m, { name: 'א', size: 2, ticket: '', keepTogether: true, note: '' }, 1);
-    m = L.addGroup(m, { name: 'ב', size: 2, ticket: '', keepTogether: false, note: '' }, 2);
+    m = addPaid(m, { name: 'א', size: 2, ticket: '', keepTogether: true, note: '' }, 1);
+    m = addPaid(m, { name: 'ב', size: 2, ticket: '', keepTogether: false, note: '' }, 2);
     m = L.createHeat(m); m = L.createHeat(m);
     const [a, b] = m.heats;
     m = L.addToHeat(m, 'g1', a.id); m = L.addToHeat(m, 'g2', b.id);
@@ -234,7 +243,7 @@ test('moving a group carries its driver names and karts', () => {
     assert.deepEqual(m.heats[0].drivers, {}, 'source keeps no orphan edits');
     // merging into a heat that already holds part of the same group re-keys after the existing drivers
     let s2 = L.initialCore();
-    s2 = L.addGroup(s2, { name: 'ג', size: 4, ticket: '', keepTogether: false, note: '' }, 1);
+    s2 = addPaid(s2, { name: 'ג', size: 4, ticket: '', keepTogether: false, note: '' }, 1);
     s2 = { ...s2, settings: { ...s2.settings, capacity: 2 } };
     s2 = L.planHeats(s2);
     assert.equal(s2.heats.length, 2);
@@ -249,7 +258,7 @@ test('capacity 10 vs 14 stays a setting; lowering it flags approved heats', () =
     assert.equal(L.initialCore().settings.capacity, 10);
     let q = L.initialCore();
     q = { ...q, settings: { ...q.settings, capacity: 14 } };
-    q = L.addGroup(q, { name: 'גדולה', size: 13, ticket: '', keepTogether: true, note: '' }, 1);
+    q = addPaid(q, { name: 'גדולה', size: 13, ticket: '', keepTogether: true, note: '' }, 1);
     q = L.planHeats(q);
     assert.equal(q.heats.length, 1);
     q = L.approveHeat(q, q.heats[0].id);
@@ -258,12 +267,22 @@ test('capacity 10 vs 14 stays a setting; lowering it flags approved heats', () =
     assert.ok(L.startBlockers(back, back.heats[0]).some(x => x.startsWith('מעל הקיבולת')));
 });
 
-test('old saved data without live/called fields still works', () => {
-    const old = { settings: { capacity: 10, laps: 8, tickets: ['x'] }, groups: [{ id: 'g1', name: 'x', size: 2, ticket: '', keepTogether: true, note: '', createdAt: 1 }], heats: [{ id: 'h1', num: 1, status: 'approved' as const, entries: [{ groupId: 'g1', count: 2 }] }], nextHeatNum: 2, seq: 2 };
-    assert.equal(L.screenState(old).state, 'next');
+test('old saved data: migrated, an unpaid legacy group stays out until the cashier confirms', () => {
+    // saved before the payment gate: no paid flag, no live/called fields, no submissions
+    const saved = { settings: { capacity: 10, laps: 8, tickets: ['x'] }, groups: [{ id: 'g1', name: 'x', size: 2, ticket: '', keepTogether: true, note: '', createdAt: 1 }], heats: [{ id: 'h1', num: 1, status: 'approved' as const, entries: [{ groupId: 'g1', count: 2 }] }], nextHeatNum: 2, seq: 2 };
+    let old = L.migrateCore(saved);
+    assert.equal(old.groups[0].paid, false);
+    assert.equal(L.screenState(old).state, 'empty', 'unpaid legacy heat is not shown on the call-up screen');
+    assert.equal(L.startHeat(old, 'h1', 0, 3), old);
     assert.equal(L.runningHeat(old), undefined);
+    old = L.confirmGroupPaid(old, 'g1', 5);
+    assert.equal(L.screenState(old).state, 'next');
     const s = L.startHeat(old, 'h1', 0, 3);
     assert.equal(L.screenState(s).state, 'race');
+    // a legacy group produced by a paid submission is migrated as paid
+    const viaForm = L.migrateCore({ ...saved, submissions: [{ id: 's9', groupName: 'x', names: ['a', 'b'], createdAt: 1, status: 'paid' as const, groupId: 'g1' }] });
+    assert.equal(viaForm.groups[0].paid, true);
+    assert.equal(L.migrateCore(viaForm), viaForm, 'already migrated: unchanged');
 });
 
 test('race clock freezes at the last finisher', () => {
@@ -349,133 +368,157 @@ test('form names continue across heats when a paid group is split', () => {
     assert.deepEqual(c.heats.map(h => L.driversOf(c, h).map(d => d.label)), [['א1', 'א2'], ['א3', 'א4'], ['א5']]);
 });
 
-test('timed heat: default 10 min, 20 possible, min 10; ends after the lap in progress when time is up', () => {
-    let q = twoQueued();
-    const h1 = q.heats[0];
-    assert.equal(L.heatMinutesOf(q), 10, 'default 10 minutes');
-    assert.equal(L.heatMinutesOf({ ...q, settings: { ...q.settings, heatMinutes: 5 } }), 10, '10 is the minimum');
-    q = { ...q, settings: { ...q.settings, heatMinutes: 20 } };
-    q = L.startHeat(q, h1.id, 0, 7, 1);
-    assert.equal(q.live?.durationMs, 20 * 60_000, 'duration fixed at start');
-    assert.equal(L.timeLeft(q.live, 60_000), 19 * 60_000);
-    // changing the setting during the heat does not change the running heat
-    const q2 = { ...q, settings: { ...q.settings, heatMinutes: 10 } };
-    assert.equal(L.timeLeft(q2.live, 60_000), 19 * 60_000);
-    const atEnd = L.liveTiming(q, 20 * 60_000 - 1);
-    assert.ok(!L.allFinished(atEnd), 'not finished before the clock runs out');
-    assert.equal(L.timeLeft(q.live, 21 * 60_000), 0);
-    const after = L.liveTiming(q, 22 * 60_000); // > 20 min + one lap (laps are under 50 s)
-    assert.ok(L.allFinished(after), 'everyone finishes the lap in progress');
-    for (const r of after) {
-        assert.ok(r.total >= 20 * 60_000, 'last lap crosses after the clock ran out');
-        assert.ok(r.total - r.laps[r.laps.length - 1] < 20 * 60_000, 'no extra lap after that');
-    }
-    assert.ok(after[0].laps.length > 8, 'a 20 minute heat is not capped at the old lap count');
-    const { result } = L.finishRun(q, 22 * 60_000);
-    assert.equal(result?.minutes, 20);
-});
-
-test('four ticket types: ליגה/מאסטר (fast) never share a heat with regular karts, unless family; heats build on payment', () => {
+test('payment gate: cashier manual add is pending; unpaid never reaches heat composition or call-up', () => {
     let c = L.initialCore();
-    c = { ...c, groups: [], submissions: [] };
-    assert.deepEqual(c.settings.tickets, ['רגיל', 'זוגי', 'ליגה', 'מאסטר']);
-    const pay = (name: string, n: number, ticket: string, family = false) => {
-        const r = L.submitForm(c, name, Array.from({ length: n }, (_, i) => `${name}${i}`), 1);
-        c = L.markPaidAndPlan(r.core, r.id!, 2, { ticket, family });
-    };
-    pay('רגיל', 3, 'רגיל');
-    assert.equal(c.heats.length, 1, 'a heat is suggested as soon as a group pays');
-    pay('ליגה', 3, 'ליגה');
-    assert.equal(c.heats.length, 2, 'fast group goes to its own heat although there is room');
-    pay('זוג', 2, 'זוגי');
-    pay('מאסטר', 2, 'מאסטר');
-    for (const h of c.heats) assert.ok(!L.mixesClasses(c, h), `heat ${h.num} mixes classes`);
-    assert.equal(c.heats.length, 2);
-    // a family may join either class
-    pay('משפחה', 2, 'ליגה', true);
-    assert.equal(c.heats.length, 2, 'family fits into an existing heat');
-    // manual mixing is blocked from approval and start
-    const fastG = c.groups.find(g => g.name === 'ליגה')!;
-    const regHeat = c.heats.find(h => h.entries.some(e => c.groups.find(g => g.id === e.groupId)?.name === 'רגיל'))!;
-    const mixed = { ...c, heats: c.heats.map(h => (h.id === regHeat.id ? { ...h, entries: [...h.entries, { groupId: fastG.id, count: 1 }] } : h)) };
-    const mh = mixed.heats.find(h => h.id === regHeat.id)!;
-    assert.ok(L.mixesClasses(mixed, mh));
-    assert.equal(L.approveHeat(mixed, mh.id).heats.find(h => h.id === mh.id)!.status, 'draft');
-    // old saved tickets migrate to the four types
-    const old = { ...c, settings: { ...c.settings, tickets: ['קארטינג', 'כרטיס משולב'], fastTickets: undefined } };
-    assert.deepEqual(L.migrateTickets(old).settings.tickets, ['רגיל', 'זוגי', 'ליגה', 'מאסטר']);
+    assert.equal(L.submitCashier(c, { name: ' ', size: 3, ticket: '', keepTogether: true, note: '' }, 1).error, 'חסר שם קבוצה');
+    const r = L.submitCashier(c, { name: 'הליכה מהרחוב', size: 3, ticket: 'קארטינג', keepTogether: true, note: 'בלי טופס' }, 1);
+    c = r.core;
+    assert.equal(L.pendingOf(c).length, 1); assert.equal(L.pendingOf(c)[0].source, 'cashier');
+    assert.equal(c.groups.length, 0, 'manual add does not create a queued group');
+    assert.equal(L.planHeats(c).heats.length, 0);
+    // the low-level constructor is unpaid and excluded everywhere downstream
+    c = L.addGroup(c, { name: 'לא שולם', size: 4, ticket: '', keepTogether: true, note: '' }, 2);
+    const unpaid = c.groups[0];
+    assert.equal(unpaid.paid, false);
+    assert.deepEqual(L.waitingGroups(c), []);
+    assert.equal(L.planHeats(c).heats.length, 0, 'planHeats skips unpaid');
+    c = L.createHeat(c);
+    const hid = c.heats[0].id;
+    assert.equal(L.addToHeat(c, unpaid.id, hid), c, 'manual heat composition refuses unpaid');
+    // even if an unpaid entry got into a heat (corrupted/legacy data), it cannot be approved, queued, called or started
+    const forced: L.Core = { ...c, heats: [{ ...c.heats[0], entries: [{ groupId: unpaid.id, count: 4 }] }] };
+    assert.equal(L.approveHeat(forced, hid).heats[0].status, 'draft');
+    const asApproved: L.Core = { ...forced, heats: [{ ...forced.heats[0], status: 'approved' }] };
+    assert.deepEqual(L.queueOf(asApproved), []);
+    assert.equal(L.callHeat(asApproved, hid), asApproved);
+    assert.equal(L.screenState(asApproved).state, 'empty');
+    assert.equal(L.startHeat(asApproved, hid, 0, 1), asApproved);
+    assert.ok(L.startBlockers(asApproved, asApproved.heats[0]).includes('קבוצה שלא אושר לה תשלום'));
+    // explicit confirmation opens the gate
+    const paidNow = L.confirmGroupPaid(asApproved, unpaid.id, 9);
+    assert.equal(L.queueOf(paidNow).length, 1);
+    assert.equal(L.screenState(L.callHeat(paidNow, hid)).state, 'call');
+    // paying the manual submission gives a paid group by headcount with its cashier choices
+    c = L.markPaid(c, r.id!, 10);
+    const g = c.groups.find(x => x.name === 'הליכה מהרחוב')!;
+    assert.ok(g.paid && g.size === 3 && g.ticket === 'קארטינג' && g.note === 'בלי טופס' && !g.names);
+    c = L.planHeats(c);
+    assert.equal(c.heats.filter(h => h.entries.some(e => e.groupId === unpaid.id)).length, 0, 'unpaid still excluded after planning');
+    assert.ok(c.heats.some(h => h.entries.some(e => e.groupId === g.id)));
 });
 
-test('ticket per participant in the form; price total; mixed non-family registration splits by kart class', () => {
+test('payment gate: an unpaid form submission is excluded end to end (queue, heats, call-up)', () => {
     let c = L.initialCore();
-    c = { ...c, groups: [], submissions: [], settings: { ...c.settings, prices: { 'רגיל': 100, 'ליגה': 150 } } };
-    const r = L.submitForm(c, 'חברים', ['א', ' ', 'ב', 'ג'], 1, ['רגיל', 'מאסטר', 'ליגה', 'רגיל']);
-    const sub = r.core.submissions![0];
-    assert.deepEqual(sub.names, ['א', 'ב', 'ג']);
-    assert.deepEqual(sub.tickets, ['רגיל', 'ליגה', 'רגיל'], 'tickets follow the names when a blank row is dropped');
-    assert.deepEqual(L.priceOf(r.core, sub.tickets!), { total: 350, missing: [] });
-    assert.deepEqual(L.priceOf(r.core, ['זוגי']).missing, ['זוגי']);
-    // not family -> two groups, never in the same heat
-    let p = L.markPaidAndPlan(r.core, r.id!, 2);
-    assert.equal(p.groups.length, 2);
-    assert.deepEqual(p.groups.map(g => g.names), [['א', 'ג'], ['ב']]);
-    assert.ok(p.heats.every(h => !L.mixesClasses(p, h)));
-    assert.equal(p.heats.length, 2);
-    // family -> one group, one heat
-    const f = L.markPaidAndPlan(r.core, r.id!, 2, { family: true });
-    assert.equal(f.groups.length, 1); assert.equal(f.heats.length, 1);
-    assert.deepEqual(f.groups[0].tickets, ['רגיל', 'ליגה', 'רגיל']);
+    c = L.submitForm(c, 'ממתינים', ['רון', 'דנה'], 1).core;
+    c = L.planHeats(c);
+    c = L.createHeat(c);
+    for (const h of c.heats) c = L.approveHeat(c, h.id);
+    assert.deepEqual(L.queueOf(c), []);
+    assert.equal(L.screenState(c).state, 'empty');
+    const names = c.heats.flatMap(h => L.driversOf(c, h).map(d => d.label));
+    assert.ok(!names.includes('רון'));
 });
 
-test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאסטר 100, ליגה 87; 20 min = 100', () => {
-    const c = L.initialCore();
-    assert.deepEqual(L.priceOf(c, ['רגיל', 'רגיל', 'מאסטר']), { total: 274, missing: [] });
-    assert.equal(L.priceOf(c, ['זוגי', 'זוגי']).total, 100, 'two people share one double kart');
-    assert.equal(L.priceOf(c, ['זוגי', 'זוגי', 'זוגי']).total, 200);
-    assert.deepEqual(L.priceOf(c, ['ליגה']), { total: 87, missing: [] });
-    assert.deepEqual(L.priceOf(c, ['רגיל', 'ליגה'], 20), { total: 200, missing: [] });
-    const old = { ...c, settings: { ...c.settings, tickets: ['יחיד', 'זוגי', 'ליגה', 'מאסטר'], prices: undefined } };
-    const m = L.migrateTickets(old);
-    assert.deepEqual(m.settings.tickets, ['רגיל', 'זוגי', 'ליגה', 'מאסטר']);
-    assert.equal(m.settings.prices?.['רגיל'], 87);
+test('auto-demo is separate: it never pays or queues pre-existing pending submissions', () => {
+    let c = L.initialCore();
+    c = L.submitForm(c, 'לקוחות אמיתיים', ['זיו', 'עדן'], 1).core;
+    const before = L.pendingOf(c)[0];
+    c = L.demoSetup(c, 2);
+    const after = (c.submissions ?? []).find(s => s.id === before.id)!;
+    assert.equal(after.status, 'pending', 'pre-existing pending submission untouched');
+    assert.ok(!c.groups.some(g => g.name === 'לקוחות אמיתיים'));
+    const labels = c.heats.flatMap(h => L.driversOf(c, h).map(d => d.label));
+    assert.ok(!labels.includes('זיו') && !labels.includes('עדן'));
+    assert.ok((c.submissions ?? []).filter(s => s.source === 'demo').every(s => s.status === 'paid'), 'only demo submissions were confirmed');
+    assert.ok(L.queueOf(c).length >= 4);
+    // the cashier's "load demo" path only creates PENDING demo registrations
+    const loaded = L.loadDemoRegistrations(L.initialCore(), 3);
+    assert.equal(loaded.core.groups.length, 0);
+    assert.ok(L.pendingOf(loaded.core).length === L.demoGroups.length && L.pendingOf(loaded.core).every(s => s.source === 'demo'));
+});
+
+test('timing core runs without the cashier: track heat -> call -> start -> results -> next', () => {
+    let c = L.initialCore();
+    assert.equal(L.cashierOn(c), false, 'cashier add-on is off by default');
+    let r = L.addTrackHeat(c, 3, 1, ['רון', '', 'דנה']);
+    assert.ok(r.heatId && !r.error); c = r.core;
+    r = L.addTrackHeat(c, 2, 2); c = r.core;
+    assert.deepEqual(c.submissions ?? [], [], 'no registrations involved');
+    const [h1, h2] = L.queueOf(c);
+    assert.ok(h1 && h2, 'both heats are queued');
+    assert.deepEqual(L.driversOf(c, h1).map(d => d.label), ['רון', 'דנה', 'נהג 3']);
+    c = L.callHeat(c, h1.id);
+    assert.equal(L.screenState(c).state, 'call');
+    c = L.startHeat(c, h1.id, 0, 7, 20);
+    assert.equal(L.screenState(c).state, 'race');
+    const { core: after, result } = L.finishRun(c, 10 ** 7);
+    assert.ok(result && result.rows.length === 3);
+    assert.equal(L.screenState(after).state, 'next');
+    assert.equal(L.screenState(after).heat!.id, h2.id);
+    assert.equal(L.addTrackHeat(after, 0, 3).error, `בין 1 ל־10 נהגים`);
+    assert.ok(L.addTrackHeat(after, 11, 3).error);
+});
+
+test('cashier add-on ON closes the track entry, so the payment gate cannot be bypassed', () => {
+    let c: L.Core = { ...L.initialCore(), settings: { ...L.initialCore().settings, cashierEnabled: true } };
+    const r = L.addTrackHeat(c, 4, 1);
+    assert.ok(r.error); assert.equal(r.core, c);
+    assert.equal(L.demoTrackSetup(c, 1), c, 'core demo adds nothing while the cashier is on');
+    // the cashier path still gates: pending registration never reaches the queue until paid
+    c = L.submitCashier(c, { name: 'קבוצה', size: 4, ticket: '', keepTogether: true, note: '' }, 2).core;
+    c = L.planHeats(c);
+    assert.deepEqual(L.queueOf(c), []);
+    c = L.markPaid(c, L.pendingOf(c)[0].id, 3);
+    c = L.planHeats(c);
+    for (const h of c.heats) c = L.approveHeat(c, h.id);
+    assert.equal(L.queueOf(c).length, 1);
+});
+
+test('core demo: synthetic heats without registrations', () => {
+    const c = L.demoTrackSetup(L.initialCore(), 1);
+    assert.equal(L.queueOf(c).length, 4);
+    assert.deepEqual(c.submissions ?? [], []);
+    for (const h of L.queueOf(c)) for (const d of L.driversOf(c, h)) assert.ok(L.DEMO_NAMES.includes(d.label));
+});
+
+test('marshal controls: start, stop (pause) freezes the clock, start resumes, save goes to history', () => {
+    let c = L.addTrackHeat(L.initialCore(), 4, 1).core;
+    assert.equal(L.marshalState(c, 0).state, 'idle');
+    const h = L.marshalState(c, 0).target!;
+    c = L.startHeat(c, h.id, 0, 3, 1);
+    assert.equal(L.marshalState(c, 1000).state, 'running');
+    c = L.pauseRun(c, 50_000);
+    assert.equal(L.marshalState(c, 60_000).state, 'paused');
+    assert.equal(L.elapsedOf(c.live, 90_000), 50_000, 'clock frozen while stopped');
+    const frozen = L.liveTiming(c, 50_000);
+    assert.deepEqual(L.liveTiming(c, 500_000), frozen, 'no laps are added while stopped');
+    assert.equal(L.pauseRun(c, 70_000), c, 'stopping twice does nothing');
+    c = L.setSpeed(c, 5, 80_000);
+    assert.equal(L.elapsedOf(c.live, 80_000), 50_000, 'speed change while stopped keeps the clock');
+    c = L.resumeRun(c, 100_000);
+    assert.equal(L.marshalState(c, 100_000).state, 'running');
+    assert.equal(L.elapsedOf(c.live, 101_000), 55_000, 'resumes from 50 s at the new speed');
+    const paused = L.pauseRun(c, 101_000);
+    const { core: saved, result } = L.finishRun(paused, 999_999);
+    assert.ok(result && result.rows.length === 4, 'saving while stopped records the frozen state');
+    assert.equal(result!.rows.reduce((m, r) => Math.max(m, r.laps.length), 0), L.liveTiming(paused, 0).reduce((m, t) => Math.max(m, t.laps.length), 0));
+    assert.equal(saved.live, null);
+    assert.equal(L.marshalState(L.startHeat(L.addTrackHeat(L.initialCore(), 2, 1).core, 'h1', 0, 1, 1), 10 ** 8).state, 'finished');
+});
+
+test('nameless quick start: heat created and on track at once; names can be added during the race', () => {
+    let r = L.quickStartHeat(L.initialCore(), 5, 1, 9, 1);
+    assert.ok(r.heatId && !r.error);
+    let c = r.core;
+    assert.equal(L.marshalState(c, 2).state, 'running');
+    const h = L.runningHeat(c)!;
+    assert.deepEqual(L.driversOf(c, h).map(d => d.label), ['נהג 1', 'נהג 2', 'נהג 3', 'נהג 4', 'נהג 5']);
+    c = L.setDriver(c, h.id, L.driversOf(c, h)[2].key, { name: 'שירן' });
+    assert.equal(L.driversOf(c, L.runningHeat(c)!)[2].label, 'שירן', 'rename during the race');
+    assert.ok(L.quickStartHeat(c, 3, 3, 1).error, 'not while another heat is on track');
+    const on: L.Core = { ...L.initialCore(), settings: { ...L.initialCore().settings, cashierEnabled: true } };
+    assert.ok(L.quickStartHeat(on, 3, 1, 1).error, 'closed while the cashier add-on is on (payment gate)');
 });
 
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
-
-test('10- and 20-minute groups never share a heat', () => {
-    let c = L.initialCore();
-    let r = L.submitForm(c, 'קצר', ['א', 'ב'], 1, ['רגיל', 'רגיל'], 10); c = L.markPaidAndPlan(r.core, r.id!, 2);
-    r = L.submitForm(c, 'ארוך', ['ג', 'ד'], 3, ['רגיל', 'רגיל'], 20); c = L.markPaidAndPlan(r.core, r.id!, 4);
-    assert.equal(c.groups.find(g => g.name === 'ארוך')?.minutes, 20);
-    const heatOf = (n: string) => c.heats.find(h => h.entries.some(e => e.groupId === c.groups.find(g => g.name === n)!.id))!;
-    assert.notEqual(heatOf('קצר').id, heatOf('ארוך').id);
-    assert.equal(L.minutesOfHeat(c, heatOf('ארוך')), 20);
-});
-
-test('fast + regular in one heat is allowed with shift manager (אחמ״ש) approval, voided when groups change', () => {
-    let c = L.initialCore();
-    c = L.addGroup(c, { name: 'מהירים', size: 2, ticket: 'ליגה', keepTogether: true, note: '' }, 1);
-    c = L.addGroup(c, { name: 'רגילים', size: 2, ticket: 'רגיל', keepTogether: true, note: '' }, 2);
-    c = L.addGroup(c, { name: 'עוד', size: 1, ticket: 'רגיל', keepTogether: true, note: '' }, 3);
-    const [a, b, d] = c.groups;
-    c = { ...c, heats: [{ id: 'h1', num: 1, status: 'draft', entries: [{ groupId: a.id, count: 2 }, { groupId: b.id, count: 2 }] }] };
-    const h = () => c.heats[0];
-    assert.equal(L.canApprove(c, h()), false);
-    c = L.approveMix(c, 'h1');
-    assert.equal(L.canApprove(c, h()), true);
-    assert.equal(L.mixApproved(c, h()), true);
-    c = { ...c, heats: [{ ...h(), entries: [...h().entries, { groupId: d.id, count: 1 }] }] };
-    assert.equal(L.canApprove(c, h()), false, 'approval covers only the groups that were there');
-});
-
-test('history period: resets at local midnight (day) or Saturday night (week); archive merge keeps one copy', () => {
-    const wed = new Date(2026, 10, 18, 15, 30).getTime(); // Wednesday
-    assert.equal(L.periodStart(wed, 'day'), new Date(2026, 10, 18).getTime());
-    assert.equal(L.periodStart(wed, 'week'), new Date(2026, 10, 15).getTime(), 'Sunday 00:00');
-    const r = (at: number, id = 'h'): L.Result => ({ heatId: id, heatNum: 1, at, simulated: true, laps: 0, rows: [] });
-    const hist = [r(wed), r(new Date(2026, 10, 17, 22).getTime()), r(new Date(2026, 10, 14, 23).getTime())];
-    assert.equal(L.currentPeriod(hist, wed, 'day').length, 1);
-    assert.equal(L.currentPeriod(hist, wed, 'week').length, 2);
-    assert.equal(L.mergeResults(hist, [r(wed)], [r(wed + 1, 'x')]).length, 4);
-});

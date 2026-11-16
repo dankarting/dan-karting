@@ -1,5 +1,5 @@
 # Dan Karting heat app (demo)
-Phone-first Hebrew RTL web app: customer signup form (group name + participant names) -> simulated payment confirmation at the cashier -> queue, cashier groups, heat planning, simple queue, screen call-up, simulated live timing, history.
+Phone-first Hebrew RTL timing system (core): heats, queue, venue call-up/live/results screens with control buttons, history. Optional cashier add-on (off by default): customer signup form (group name + participant names) -> simulated payment confirmation -> queue, heat planning, simple queue, screen call-up, simulated live timing, history.
 Everything is simulated. No venue integration, customer data, prices, payments, safety/age/height rules, vehicle control or spoken announcements.
 
 ## Run standalone
@@ -13,4 +13,5 @@ Everything is simulated. No venue integration, customer data, prices, payments, 
 - shim/instinct-files.tsx  local stand-in for the hosted '@instinct/files' package (aliased in vite.config.ts and tsconfig.json). In the hosted Files environment the real package is used and App.tsx is unchanged.
 - Timing is SIMULATED. A real feed produces Passing[] for lapsFromPassings() (read-only); see docs/TIMING-INTEGRATION.md.
 - Venue screens: lineup board (placeholder photos + names) and live timing board. Live tab -> "הדגמה מלאה בלחיצה" runs the whole demo.
-- Logo: local copy in public/dan-karting-logo.jpg (cropped from a phone screenshot; replace with the original file for sharper screens).
+- Logo: official wide logo bundled at public/dan-karting-wide-logo.png (no runtime external calls).
+- Payment gate: no group reaches heats, queue or call-up without an explicit cashier "שולם" (simulated confirmation, no payment processing).
