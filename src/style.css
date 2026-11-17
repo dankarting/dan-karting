@@ -579,3 +579,13 @@ body { background: #0b0b0c; }
 @keyframes rc-blink { to { visibility: hidden; } }
 @media (max-width: 420px) { .rc-btn { min-height: 60px; font-size: 12px; } .rc-btn i { font-size: 19px; } .rc-clock { font-size: 24px; } .rc-btns { gap: 5px; } }
 @media (prefers-reduced-motion: reduce) { .rc-live .rc-dot, .rc-paused .rc-clock { animation: none; } }
+/* compact race control in the track-screen header (staff only) */
+.rc.rc-compact { margin: 0; padding: 6px; border-radius: 12px; background: rgba(10,6,7,.55); border-color: rgba(255,255,255,.15); flex: none; }
+.rc-compact .rc-btns { display: flex; gap: 6px; }
+.rc-compact .rc-btn { min-height: 48px; min-width: 56px; padding: 4px 8px; font-size: 11px; gap: 2px; border-radius: 10px; }
+.rc-compact .rc-btn i { font-size: 17px; }
+.rc-compact .rc-ask { padding: 6px 8px; flex-wrap: nowrap; }
+.rc-compact .rc-ask > span { flex: none; white-space: nowrap; }
+.rc-compact .rc-ask .rc-btn { min-height: 40px; }
+@media (min-width: 900px) { .rc-compact .rc-btn { min-height: 64px; min-width: 76px; font-size: 13px; } .rc-compact .rc-btn i { font-size: 22px; } }
+@media (max-width: 599px) { .tb-head:has(.rc-compact), .lu-head:has(.rc-compact) { flex-wrap: wrap; } .rc.rc-compact { order: 9; width: 100%; } .rc-compact .rc-btns > .rc-btn { flex: 1; min-width: 0; } }

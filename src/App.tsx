@@ -465,7 +465,7 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
     return <span className={`tb-lights ${state}`} aria-label={state === 'live' ? 'מקצה פעיל' : 'ממתין'}>{[0, 1, 2, 3].map(i => <i key={i} />)}</span>;
 }
 
-function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string }) {
+function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string; controls?: React.ReactNode }) {
     useEscape(p.onClose);
     const dense = p.rows.length > 10;
     const listRef = useRef<HTMLOListElement>(null);
@@ -485,6 +485,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
             <Logo big />
             <Lights state={p.state} />
             <div className="tb-title"><div className="tb-heat">{p.title}</div><div className="tb-sub">{p.sub}</div></div>
+            {p.controls}
             <div className="tb-clocks">
                 {p.countdown != null && <div className="tb-count" aria-label="זמן שנותר"><small>נותר</small><bdi>{p.countdown}</bdi></div>}
                 {p.clock && <div className="tb-elapsed"><small>זמן</small><bdi>{p.clock}</bdi></div>}
@@ -555,7 +556,7 @@ function Podium({ title, rows, onClose }: { title: string; rows: BoardRow[]; onC
 }
 
 /** Lineup board: the heat being called (or next), as driver photo cards with names and kart numbers. */
-function CallDisplay(p: { core: L.Core; state: 'call' | 'next' | 'empty'; heat?: L.Heat; onClose: () => void }) {
+function CallDisplay(p: { core: L.Core; state: 'call' | 'next' | 'empty'; heat?: L.Heat; onClose: () => void; controls?: React.ReactNode }) {
     useEscape(p.onClose);
     const ds = p.heat ? L.driversOf(p.core, p.heat) : [];
     const staff = L.kartMode(p.core) === 'staff';
@@ -565,6 +566,7 @@ function CallDisplay(p: { core: L.Core; state: 'call' | 'next' | 'empty'; heat?:
         <header className="lu-head">
             <Logo big />
             <div className="lu-banner" key={`${p.state}-${p.heat?.id ?? ''}`}><span>{p.state === 'call' ? 'נקראים למסלול' : p.state === 'next' ? 'הבא בתור' : 'אין מקצים בתור'}</span>{p.heat && <b>מקצה {p.heat.num}</b>}</div>
+            {p.controls}
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
         </header>
         <div className="lu-sub">{p.heat ? `${ds.length} נהגים${p.state === 'call' ? ' · לגשת לאזור ההמתנה, לפי מספר הקארט' : ' · עוד לא נקרא, להתכונן'}` : waiting ? `${waiting} קבוצות ממתינות לשיבוץ בקופה` : 'ממתינים לקבוצות'}</div>
@@ -616,7 +618,7 @@ const mmss = (ms: number) => { const s = Math.ceil(ms / 1000); return `${String(
 
 /** The venue screen: switches by itself between lineup (call / next / empty) and live timing. */
 /** Live board from RentiX (real track timing, read-only). */
-function ExtWall({ ext, onClose }: { ext: R.ExtBoard; onClose: () => void }) {
+function ExtWall({ ext, onClose, controls }: { ext: R.ExtBoard; onClose: () => void; controls?: React.ReactNode }) {
     const lead = ext.rows[0];
     const bAll = Math.min(...ext.rows.map(r => r.best ?? Infinity));
     const done = /finish|checker/i.test(ext.flag);
@@ -628,7 +630,7 @@ function ExtWall({ ext, onClose }: { ext: R.ExtBoard; onClose: () => void }) {
             : lead.lapTimes && lead.lapTimes.length === lead.laps && r.laps > 0 ? `+${L.fmt(Math.max(0, r.total - (lead.total - lead.lapTimes.slice(r.laps).reduce((a, b) => a + b, 0))))}` : '',
         finished: done, isBest: r.best != null && r.best === bAll, gained: null }));
     return <WallDisplay title={ext.run || 'מקצה'} sub={done ? 'הסתיים · תוצאות' : `על המסלול · זמנים מהמסלול${ext.flag ? ` · ${ext.flag}` : ''}`} totalLaps={0} state={done ? 'done' : 'live'}
-        clock={ext.raceTime != null ? L.fmt(ext.raceTime) : undefined} countdown={ext.timeToGo ? mmss(ext.timeToGo) : undefined} rows={rows} onClose={onClose} real srcName={R.sourceName(ext.src)} />;
+        clock={ext.raceTime != null ? L.fmt(ext.raceTime) : undefined} countdown={ext.timeToGo ? mmss(ext.timeToGo) : undefined} rows={rows} onClose={onClose} real srcName={R.sourceName(ext.src)} controls={controls} />;
 }
 
 /** Polls the timing bridge on this computer (dk-bridge, or the older rentix-bridge.ps1). Not running = no live data.
@@ -650,9 +652,10 @@ function useRentix(): RxState {
     return st;
 }
 
-export function TrackScreen({ core, now, onClose, ext }: { core: L.Core; now: number; onClose: () => void; ext?: R.ExtBoard | null }) {
+export function TrackScreen({ core, now, onClose, ext, ctl }: { core: L.Core; now: number; onClose: () => void; ext?: R.ExtBoard | null; ctl?: RaceCtl }) {
+    const controls = ctl ? <RaceControl core={core} now={now} compact {...ctl} /> : undefined;
     // real timing from RentiX wins over the simulation while it has a heat
-    if (R.extActive(ext)) return <ExtWall ext={ext} onClose={onClose} />;
+    if (R.extActive(ext)) return <ExtWall ext={ext} onClose={onClose} controls={controls} />;
     const sc = L.screenState(core);
     if (sc.state === 'race' && sc.heat) {
         const timing = L.liveTiming(core, now);
@@ -663,10 +666,10 @@ export function TrackScreen({ core, now, onClose, ext }: { core: L.Core; now: nu
         const timed = left != null;
         const sub = done ? 'הסתיים · תוצאות' : L.isPaused(core) ? 'המקצה עצור · דגל אדום' : timed && left === 0 ? 'הזמן נגמר · הקפה אחרונה' : 'על המסלול · בלייב';
         return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={timed ? `${sub} · ${Math.round(core.live!.durationMs! / 60_000)} דק׳` : sub} totalLaps={timed ? 0 : core.settings.laps} state={done ? 'done' : 'live'}
-            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose}
+            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose} controls={controls}
             footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} />;
     }
-    return <CallDisplay core={core} state={sc.state === 'race' ? 'empty' : sc.state} heat={sc.heat} onClose={onClose} />;
+    return <CallDisplay core={core} state={sc.state === 'race' ? 'empty' : sc.state} heat={sc.heat} onClose={onClose} controls={controls} />;
 }
 
 /** Heat length picker: 10 minutes is the minimum, 20 the other common option, or any value up to 30. */
@@ -690,33 +693,40 @@ type LiveProps = {
 };
 
 /** Race control: one bar with start, pause/resume, save, reset and cancel for the heat on track. */
-function RaceControl(p: { core: L.Core; update: Update; now: number; done: boolean; canSave: boolean; startable: L.Heat | undefined; start: (id: string) => void; save: () => void; cancel: () => void }) {
+type RaceCtl = { start: (id: string) => void; save: () => void; cancel: () => void; update: Update };
+function RaceControl(p: RaceCtl & { core: L.Core; now: number; compact?: boolean }) {
     const heat = L.runningHeat(p.core);
+    const timing = heat ? L.liveTiming(p.core, p.now) : [];
+    const done = !!heat && L.allFinished(timing);
+    const canSave = done || timing.some(t => t.laps.length > 0);
+    const startable = heat ? undefined : [L.calledHeat(p.core), ...L.queueOf(p.core)].find(h => h && L.startBlockers(p.core, h).length === 0);
     const paused = L.isPaused(p.core);
     const [ask, setAsk] = useState<'' | 'reset' | 'cancel'>('');
     useEffect(() => { setAsk(''); }, [heat?.id]);
     const left = L.timeLeft(p.core.live, p.now);
-    const state = !heat ? 'idle' : p.done ? 'done' : paused ? 'paused' : 'live';
-    const label = { idle: p.startable ? `מוכן · מקצה ${p.startable.num}` : 'אין מקצה מוכן', live: `במירוץ · מקצה ${heat?.num}`, paused: `עצור · מקצה ${heat?.num}`, done: `הסתיים · מקצה ${heat?.num}` }[state];
-    const clock = heat ? (left != null ? mmss(left) : L.fmt(L.elapsedOf(p.core.live, p.now))) : p.startable ? `${L.heatMinutesOf(p.core)}:00` : '--:--';
-    return <div className={`rc rc-${state}`} role="toolbar" aria-label="שליטה במקצה">
-        <div className="rc-status">
+    const state = !heat ? 'idle' : done ? 'done' : paused ? 'paused' : 'live';
+    const label = { idle: startable ? `מוכן · מקצה ${startable.num}` : 'אין מקצה מוכן', live: `במירוץ · מקצה ${heat?.num}`, paused: `עצור · מקצה ${heat?.num}`, done: `הסתיים · מקצה ${heat?.num}` }[state];
+    const clock = heat ? (left != null ? mmss(left) : L.fmt(L.elapsedOf(p.core.live, p.now))) : startable ? `${L.heatMinutesOf(p.core)}:00` : '--:--';
+    return <div className={`rc rc-${state}${p.compact ? ' rc-compact' : ''}`} role="toolbar" aria-label="שליטה במקצה" onClick={e => e.stopPropagation()}>
+        {!p.compact && <div className="rc-status">
             <span className="rc-dot" aria-hidden="true" />
             <span className="rc-label">{label}</span>
             <bdi className="rc-clock" aria-label="שעון המקצה">{clock}</bdi>
-        </div>
+        </div>}
         {ask ? <div className="rc-ask" role="alertdialog" aria-label="אישור">
-            <span>{ask === 'reset' ? 'לאפס את המקצה? השעון וההקפות יתחילו מאפס, אותם נהגים.' : 'לבטל את המקצה בלי לשמור? הוא יחזור לתור.'}</span>
+            <span>{p.compact ? (ask === 'reset' ? 'לאפס?' : 'לבטל בלי לשמור?') : ask === 'reset' ? 'לאפס את המקצה? השעון וההקפות יתחילו מאפס, אותם נהגים.' : 'לבטל את המקצה בלי לשמור? הוא יחזור לתור.'}</span>
             <button type="button" className="rc-btn rc-danger" onClick={() => { if (ask === 'reset') p.update(c => L.restartRun(c, Date.now())); else p.cancel(); setAsk(''); }}>{ask === 'reset' ? 'כן, אפס' : 'כן, בטל'}</button>
             <button type="button" className="rc-btn" onClick={() => setAsk('')}>חזרה</button>
         </div> : <div className="rc-btns">
-            <button type="button" className="rc-btn rc-go" disabled={!!heat || !p.startable} onClick={() => p.startable && p.start(p.startable.id)}><i aria-hidden="true">▶</i><span>התחלה</span></button>
-            {paused
+            {!(p.compact && heat) && <button type="button" className="rc-btn rc-go" disabled={!!heat || !startable} onClick={() => startable && p.start(startable.id)}><i aria-hidden="true">▶</i><span>{p.compact && startable ? `התחל מקצה ${startable.num}` : 'התחלה'}</span></button>}
+            {p.compact && !heat ? null : paused
                 ? <button type="button" className="rc-btn rc-go" onClick={() => p.update(c => L.resumeRun(c, Date.now()))}><i aria-hidden="true">▶</i><span>המשך</span></button>
-                : <button type="button" className="rc-btn rc-stop" disabled={!heat || p.done} onClick={() => p.update(c => L.pauseRun(c, Date.now()))}><i aria-hidden="true">❚❚</i><span>עצירה</span></button>}
-            <button type="button" className="rc-btn rc-save" disabled={!heat || !p.canSave} onClick={p.save}><i aria-hidden="true">✓</i><span>{p.done ? 'שמירה' : 'סיום ושמירה'}</span></button>
+                : <button type="button" className="rc-btn rc-stop" disabled={!heat || done} onClick={() => p.update(c => L.pauseRun(c, Date.now()))}><i aria-hidden="true">❚❚</i><span>עצירה</span></button>}
+            {!(p.compact && !heat) && <>
+            <button type="button" className="rc-btn rc-save" disabled={!heat || !canSave} onClick={p.save}><i aria-hidden="true">✓</i><span>{done ? 'שמירה' : 'סיום ושמירה'}</span></button>
             <button type="button" className="rc-btn rc-reset" disabled={!heat} onClick={() => setAsk('reset')}><i aria-hidden="true">↺</i><span>איפוס</span></button>
             <button type="button" className="rc-btn rc-cancel" disabled={!heat} onClick={() => setAsk('cancel')}><i aria-hidden="true">✕</i><span>ביטול</span></button>
+            </>}
         </div>}
     </div>;
 }
@@ -754,7 +764,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
         </div>
         <p className="meta">{auto ? autoNext : 'תור פשוט, בלי שעות: המקצים המאושרים לפי הסדר. "מסך מסלול" הוא המסך הגדול באתר: הוא עובר לבד בין קריאה, הבא בתור ומירוץ. בדמו האוטומטי המסך קורא, מציג תוצאות וממשיך לבד, אבל מקצה מתחיל רק בלחיצה על "התחל מקצה". הקופאית יכולה לשנות הרכב בכל שלב בלשונית מקצים.'}</p>
 
-        <RaceControl core={core} update={update} now={now} done={done} canSave={done || rows.some(r => r.laps > 0)} startable={!heat ? [calledH, ...qList].find(h => h && L.startBlockers(core, h).length === 0) : undefined} start={start} save={save} cancel={cancel} />
+        <RaceControl core={core} update={update} now={now} start={start} save={save} cancel={cancel} />
         {heat && <section className="panel ontrack" aria-label="על המסלול">
             <div className="row-actions">
                 <strong className="hnum">על המסלול · מקצה {heat.num}</strong>
@@ -936,7 +946,7 @@ function PublicSite({ session, on, setOn, status }: { session: Session | null; o
                 <Btn kind="ghost" onClick={() => { setOn(false); void Cloud.signOut(); }}>התנתק</Btn>
             </div>
             {status && <p className={status.startsWith('✓') ? 'meta' : 'err'} role="status">{status}</p>}
-        </>}
+            </>}
     </Group>;
 }
 
@@ -1180,7 +1190,7 @@ export function App() {
             {ready && tab === 'history' && <HistoryTab core={core} update={update} hist={hist} now={now} />}
             {ready && tab === 'settings' && <Settings rx={rx} site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); updHist(() => []); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
-            {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} ext={extNow} />}
+            {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} ext={extNow} ctl={{ start, save, cancel, update }} />}
             {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות · ${L.resultTitle(lastRes)}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
         </div>
     </FileCard>;
