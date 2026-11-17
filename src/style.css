@@ -249,7 +249,7 @@ body { background: #0b0b0c; }
 .tb-row.tb-cols { background: none; font-size: 10px; color: #c9a9ab; font-weight: 700; padding-block: 2px; }
 .tb-row.lead { box-shadow: inset -4px 0 0 var(--dk-yellow); }
 /* phone: pos, kart, name, best, gap, laps */
-.tb-row > :nth-child(4), .tb-row > :nth-child(5), .tb-row > :nth-child(6), .tb-row > :nth-child(7) { display: none; }
+.tb-row > :nth-child(4) { display: none; }
 .tb-pos { font-size: 20px; font-weight: 900; text-align: center; position: relative; line-height: 1; }
 .tb-pos em { display: block; font-style: normal; font-size: 9px; font-weight: 800; margin-top: 2px; }
 .tb-pos em.up { color: #2ee06a; } .tb-pos em.down { color: #ff6b70; }
@@ -268,8 +268,8 @@ body { background: #0b0b0c; }
 /* column headers take the same alignment as the values under them */
 .tb-row.tb-cols > span { text-align: center; white-space: nowrap; }
 .tb-row.tb-cols > :nth-child(3) { text-align: start; }
-.tb-row.tb-cols > :nth-child(7), .tb-row.tb-cols > :nth-child(9) { text-align: end; }
-.tb-row.tb-cols > :nth-child(8) { padding-inline: 6px; }
+.tb-row.tb-cols > :nth-child(4), .tb-row.tb-cols > :nth-child(6) { text-align: end; }
+.tb-row.tb-cols > :nth-child(5) { padding-inline: 6px; }
 
 @media (min-width: 900px) {
   .tb-head { padding: 14px 40px; gap: 22px; }
@@ -281,7 +281,7 @@ body { background: #0b0b0c; }
   .tb-count bdi { font-size: 76px; } .tb-clocks small { font-size: 16px; }
   .tb-elapsed { display: block; } .tb-elapsed bdi { font-size: 30px; }
   .tb-rows { padding: 0 32px; gap: 5px; margin-top: 10px; }
-  .tb-row { grid-template-columns: 70px 74px minmax(0,1fr) 108px 108px 108px 140px 170px 130px 84px; gap: 12px; font-size: 30px; padding: 8px 14px; }
+  .tb-row { grid-template-columns: 70px 74px minmax(0,1fr) 160px 190px 150px 100px; gap: 12px; font-size: 30px; padding: 8px 14px; }
   .tb-row > :nth-child(n) { display: initial; }
   .tb-row.tb-cols { font-size: 15px; }
   .tb-pos { font-size: 38px; } .tb-pos em { font-size: 14px; }
@@ -431,9 +431,9 @@ body { background: #0b0b0c; }
 /* ---- real track timing: lap times only, no sector columns (as on the RentiX screen) */
 .wall.nosec .tb-row { grid-template-columns: 34px 34px minmax(0,1fr) 64px 70px 34px; }
 .wall.nosec .tb-row > :nth-child(n) { display: initial; }
-.wall.nosec .tb-row > :nth-child(4), .wall.nosec .tb-row > :nth-child(5), .wall.nosec .tb-row > :nth-child(6), .wall.nosec .tb-row > :nth-child(9) { display: none; }
+.wall.nosec .tb-row > :nth-child(6) { display: none; }
 @media (min-width: 900px) {
-  .wall.nosec .tb-row { grid-template-columns: 70px 74px minmax(0,1fr) 170px 190px 150px 110px; }
+  .wall.nosec .tb-row { grid-template-columns: 70px 74px minmax(0,1fr) 170px 190px 110px; }
 }
 
 /* ---- public site tabs (live results / next up / race results / kart info) */
@@ -459,8 +459,8 @@ body { background: #0b0b0c; }
 @media (max-width: 899px) {
   .wall:not(.nosec) .tb-row .tb-name { padding-inline-end: 30px; }
   .tb-row { grid-template-columns: 30px 32px minmax(0,1fr) 66px 66px 40px; }
-  .wall:not(.nosec) .tb-row > .tb-best, .wall:not(.nosec) .tb-row.tb-cols > :nth-child(8) { margin-inline-start: -28px; margin-inline-end: 28px; }
-  .tb-row > .tb-gap, .tb-row.tb-cols > :nth-child(9) { text-align: center; margin-inline-start: -28px; }
+  .wall:not(.nosec) .tb-row > .tb-best, .wall:not(.nosec) .tb-row.tb-cols > :nth-child(5) { margin-inline-start: -28px; margin-inline-end: 28px; }
+  .tb-row > .tb-gap, .tb-row.tb-cols > :nth-child(6) { text-align: center; margin-inline-start: -28px; }
 }
 
 /* ---- end-of-heat podium */

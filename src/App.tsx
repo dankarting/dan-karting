@@ -424,10 +424,9 @@ function Heats({ core, update }: { core: L.Core; update: Update }) {
 // ------------------------------------------------------------ venue screens
 // Original design for the on-site screens: a lineup board (driver photos + names) and a red/dark
 // live timing board. Not a copy of any vendor's screens or assets. All data is synthetic.
-type Sec = { ms: number; cls: '' | 'pb' | 'ob' };
 type BoardRow = {
     key: string; pos: number; kart: number; label: string; laps: number; best: number | null; last: number | null;
-    gap: string; finished: boolean; isBest: boolean; sectors: Sec[] | null; gained: number | null;
+    gap: string; finished: boolean; isBest: boolean; gained: number | null;
 };
 
 function useEscape(onClose: () => void) {
@@ -469,7 +468,7 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
 function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string }) {
     useEscape(p.onClose);
     const dense = p.rows.length > 10;
-    const nosec = p.rows.every(r => !r.sectors);
+    const nosec = !!p.real; // real track timing: no gap column (as on the RentiX screen)
     // podium at the end of a heat: shown for a few seconds over the results, tap to close
     const [podium, setPodium] = useState(false);
     const podKey = p.state === 'done' && p.rows.length > 0 ? p.title : '';
@@ -492,19 +491,18 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
         </header>
         {p.real ? <div className="wall-sim real">זמנים מהמסלול · {p.srcName ?? 'RentiX'}</div> : <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>}
         <ol className={`tb-rows${dense ? ' dense' : ''}`}>
-            <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>S1</span><span>S2</span><span>S3</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
+            <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
             {p.rows.map(r => <li key={r.key} className={`tb-row${r.pos === 1 ? ' lead' : ''}`}>
                 <span className="tb-pos">{r.pos}{r.gained ? <em className={r.gained > 0 ? 'up' : 'down'}>{r.gained > 0 ? `▲${r.gained}` : `▼${-r.gained}`}</em> : null}</span>
                 <span className="tb-kart">{r.kart}</span>
                 <span className="tb-name">{r.label}</span>
-                {[0, 1, 2].map(i => <span key={i} className={`tb-sec ${r.sectors?.[i]?.cls ?? ''}`}><bdi>{r.sectors ? (r.sectors[i].ms / 1000).toFixed(3) : '–'}</bdi></span>)}
                 <span className="tb-last"><bdi>{L.fmt(r.last)}</bdi></span>
                 <span className={`tb-best${r.isBest ? ' ob' : ''}`}><bdi>{L.fmt(r.best)}</bdi></span>
                 <span className="tb-gap"><bdi>{r.gap}</bdi></span>
                 <span className="tb-laps">{p.totalLaps ? `${r.laps}/${p.totalLaps}` : r.laps}{r.finished ? ' ✓' : ''}</span>
             </li>)}
         </ol>
-        <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה{nosec ? '' : <> · <span className="pb">ירוק</span> שיא אישי · ▲▼ מקומות לעומת הזינוק</>}</div>
+        <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה{nosec ? '' : ' · ▲▼ מקומות לעומת הזינוק'}</div>
         {p.footer && <div className="call-next">{p.footer}</div>}
         {podium && <Podium title={p.title} rows={p.rows} onClose={() => setPodium(false)} />}
     </div>;
@@ -572,29 +570,21 @@ function gapTo(total: number, laps: number, leaderLaps: number[]): string {
 function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
     const h = L.runningHeat(core);
     if (!h || !core.live) return [];
-    const seed = core.live.seed;
     const drivers = L.driversOf(core, h);
     const ranked = L.rank(timing);
     const leader = ranked[0];
     const bestAll = Math.min(...timing.map(t => t.best ?? Infinity));
-    // simulated sectors of every completed lap: overall best (purple) and personal best (green) per sector
-    const secs = new Map<string, [number, number, number][]>();
-    timing.forEach(t => { const idx = drivers.findIndex(d => d.key === t.key); secs.set(t.key, t.laps.map((ms, n) => L.sectorsOf(ms, seed, idx, n))); });
-    const overall = [0, 1, 2].map(i => Math.min(...[...secs.values()].flat().map(x => x[i]), Infinity));
     return ranked.map((t, i) => {
         const d = drivers.find(x => x.key === t.key)!;
         const gap = i === 0 || !leader ? '' : gapTo(t.total, t.laps.length, leader.laps);
-        const mine = secs.get(t.key) ?? [];
-        const lastS = mine[mine.length - 1];
-        const sectors: Sec[] | null = lastS ? lastS.map((ms, k) => ({ ms, cls: ms === overall[k] ? 'ob' : ms === Math.min(...mine.map(x => x[k])) ? 'pb' : '' })) : null;
         const grid = drivers.findIndex(x => x.key === t.key) + 1;
-        return { key: t.key, pos: i + 1, kart: d.kart, label: d.label, laps: t.laps.length, best: t.best, last: t.last, gap, finished: t.finished, isBest: t.best != null && t.best === bestAll, sectors, gained: t.laps.length ? grid - (i + 1) : null };
+        return { key: t.key, pos: i + 1, kart: d.kart, label: d.label, laps: t.laps.length, best: t.best, last: t.last, gap, finished: t.finished, isBest: t.best != null && t.best === bestAll, gained: t.laps.length ? grid - (i + 1) : null };
     });
 }
 
 function resultRowsOf(r: L.Result): BoardRow[] {
     const bAll = Math.min(...r.rows.map(x => x.best ?? Infinity));
-    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: i === 0 ? '' : gapTo(x.total, x.laps.length, r.rows[0].laps), finished: r.simulated ? x.laps.length >= r.laps : true, isBest: x.best != null && x.best === bAll, sectors: null, gained: null }));
+    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: i === 0 ? '' : gapTo(x.total, x.laps.length, r.rows[0].laps), finished: r.simulated ? x.laps.length >= r.laps : true, isBest: x.best != null && x.best === bAll, gained: null }));
 }
 
 const mmss = (ms: number) => { const s = Math.ceil(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
@@ -609,7 +599,7 @@ function ExtWall({ ext, onClose }: { ext: R.ExtBoard; onClose: () => void }) {
         gap: i === 0 || r.total == null || lead.total == null ? '' : r.laps === lead.laps ? `+${L.fmt(Math.max(0, r.total - lead.total))}`
             // fewer laps: the leader's race time when it had done as many laps
             : lead.lapTimes && lead.lapTimes.length === lead.laps && r.laps > 0 ? `+${L.fmt(Math.max(0, r.total - (lead.total - lead.lapTimes.slice(r.laps).reduce((a, b) => a + b, 0))))}` : '',
-        finished: done, isBest: r.best != null && r.best === bAll, sectors: null, gained: null }));
+        finished: done, isBest: r.best != null && r.best === bAll, gained: null }));
     return <WallDisplay title={ext.run || 'מקצה'} sub={done ? 'הסתיים · תוצאות' : `על המסלול · זמנים מהמסלול${ext.flag ? ` · ${ext.flag}` : ''}`} totalLaps={0} state={done ? 'done' : 'live'}
         clock={ext.raceTime != null ? L.fmt(ext.raceTime) : undefined} countdown={ext.timeToGo ? mmss(ext.timeToGo) : undefined} rows={rows} onClose={onClose} real srcName={R.sourceName(ext.src)} />;
 }
