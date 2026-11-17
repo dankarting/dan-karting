@@ -516,7 +516,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
         <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה{nosec ? '' : ' · ▲▼ מקומות לעומת הזינוק'}</div>
         {p.footer && <div className="call-next">{p.footer}</div>}
         {lastCall && <div className="ll-call" role="status" aria-live="assertive" onClick={() => setLastCall(false)}>
-            <div className="ll-flag" aria-hidden="true"><i /></div>
+            <div className="ll-flag" aria-hidden="true"><div className="ll-wave"><span className="ll-pole" /><span className="ll-cloth">{Array.from({ length: 8 }, (_, i) => <i key={i} style={{ '--i': i } as React.CSSProperties} />)}</span></div></div>
             <div className="ll-text"><b>הקפה אחרונה</b><span>LAST LAP</span></div>
         </div>}
         {podium && <Podium title={p.title} rows={p.rows} onClose={() => setPodium(false)} />}
