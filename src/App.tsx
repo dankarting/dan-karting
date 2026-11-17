@@ -473,12 +473,12 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
     const nosec = !!p.real; // real track timing: no gap column (as on the RentiX screen)
     // podium at the end of a heat: shown for a few seconds over the results, tap to close
     const [podium, setPodium] = useState(false);
-    // last-lap call: white flag sweeps in for a few seconds when the heat enters its final 30 s
+    // last-lap call: giant checkered flag waves across the screen for 3.5 s when the heat enters its final 30 s
     const [lastCall, setLastCall] = useState(false);
     useEffect(() => {
         if (!p.lastLap) { setLastCall(false); return; }
         setLastCall(true);
-        const t = setTimeout(() => setLastCall(false), 6_000);
+        const t = setTimeout(() => setLastCall(false), 3_500);
         return () => clearTimeout(t);
     }, [p.lastLap]);
     const podKey = p.state === 'done' && p.rows.length > 0 ? p.title : '';
