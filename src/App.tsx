@@ -531,6 +531,13 @@ function CallDisplay(p: { core: L.Core; state: 'call' | 'next' | 'empty'; heat?:
     </div>;
 }
 
+/** Time behind the leader, compared at the same number of laps (the lap count has its own column). */
+function gapTo(total: number, laps: number, leaderLaps: number[]): string {
+    if (laps === 0 || leaderLaps.length < laps) return '';
+    const at = leaderLaps.slice(0, laps).reduce((a, b) => a + b, 0);
+    return `+${L.fmt(Math.max(0, total - at))}`;
+}
+
 function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
     const h = L.runningHeat(core);
     if (!h || !core.live) return [];
@@ -545,7 +552,7 @@ function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
     const overall = [0, 1, 2].map(i => Math.min(...[...secs.values()].flat().map(x => x[i]), Infinity));
     return ranked.map((t, i) => {
         const d = drivers.find(x => x.key === t.key)!;
-        const gap = i === 0 || !leader || t.laps.length === 0 && leader.laps.length === 0 ? '' : t.laps.length < leader.laps.length ? `-${leader.laps.length - t.laps.length} הקפות` : `+${L.fmt(t.total - leader.total)}`;
+        const gap = i === 0 || !leader ? '' : gapTo(t.total, t.laps.length, leader.laps);
         const mine = secs.get(t.key) ?? [];
         const lastS = mine[mine.length - 1];
         const sectors: Sec[] | null = lastS ? lastS.map((ms, k) => ({ ms, cls: ms === overall[k] ? 'ob' : ms === Math.min(...mine.map(x => x[k])) ? 'pb' : '' })) : null;
@@ -556,7 +563,7 @@ function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
 
 function resultRowsOf(r: L.Result): BoardRow[] {
     const bAll = Math.min(...r.rows.map(x => x.best ?? Infinity));
-    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: i === 0 ? '' : x.laps.length < r.rows[0].laps.length ? `-${r.rows[0].laps.length - x.laps.length} הקפות` : `+${L.fmt(x.total - r.rows[0].total)}`, finished: r.simulated ? x.laps.length >= r.laps : true, isBest: x.best != null && x.best === bAll, sectors: null, gained: null }));
+    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: i === 0 ? '' : gapTo(x.total, x.laps.length, r.rows[0].laps), finished: r.simulated ? x.laps.length >= r.laps : true, isBest: x.best != null && x.best === bAll, sectors: null, gained: null }));
 }
 
 const mmss = (ms: number) => { const s = Math.ceil(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
@@ -568,7 +575,9 @@ function ExtWall({ ext, onClose }: { ext: R.ExtBoard; onClose: () => void }) {
     const bAll = Math.min(...ext.rows.map(r => r.best ?? Infinity));
     const done = /finish|checker/i.test(ext.flag);
     const rows: BoardRow[] = ext.rows.map((r, i) => ({ key: `${r.kart}-${i}`, pos: r.pos, kart: r.kart, label: r.name, laps: r.laps, best: r.best, last: r.last,
-        gap: i === 0 ? '' : r.laps < lead.laps ? `-${lead.laps - r.laps} הקפות` : r.total != null && lead.total != null ? `+${L.fmt(r.total - lead.total)}` : '',
+        gap: i === 0 || r.total == null || lead.total == null ? '' : r.laps === lead.laps ? `+${L.fmt(Math.max(0, r.total - lead.total))}`
+            // fewer laps: the leader's race time when it had done as many laps
+            : lead.lapTimes && lead.lapTimes.length === lead.laps && r.laps > 0 ? `+${L.fmt(Math.max(0, r.total - (lead.total - lead.lapTimes.slice(r.laps).reduce((a, b) => a + b, 0))))}` : '',
         finished: done, isBest: r.best != null && r.best === bAll, sectors: null, gained: null }));
     return <WallDisplay title={ext.run || 'מקצה'} sub={done ? 'הסתיים · תוצאות' : `על המסלול · זמנים מהמסלול${ext.flag ? ` · ${ext.flag}` : ''}`} totalLaps={0} state={done ? 'done' : 'live'}
         clock={ext.raceTime != null ? L.fmt(ext.raceTime) : undefined} countdown={ext.timeToGo ? mmss(ext.timeToGo) : undefined} rows={rows} onClose={onClose} real srcName={R.sourceName(ext.src)} />;
