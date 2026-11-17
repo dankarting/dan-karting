@@ -265,6 +265,11 @@ body { background: #0b0b0c; }
 .tb-laps { text-align: center; color: #cfc6c3; }
 .tb-legend { margin: 8px 16px 0; font-size: 11px; color: #a99; }
 .tb-rows.dense .tb-row { padding-block: 4px; font-size: 13px; }
+/* column headers take the same alignment as the values under them */
+.tb-row.tb-cols > span { text-align: center; white-space: nowrap; }
+.tb-row.tb-cols > :nth-child(3) { text-align: start; }
+.tb-row.tb-cols > :nth-child(7), .tb-row.tb-cols > :nth-child(9) { text-align: end; }
+.tb-row.tb-cols > :nth-child(8) { padding-inline: 6px; }
 
 @media (min-width: 900px) {
   .tb-head { padding: 14px 40px; gap: 22px; }
@@ -452,9 +457,9 @@ body { background: #0b0b0c; }
 .kinfo .kcols .kart { background: none; border: 0; box-shadow: none; color: inherit; font-size: 12px; font-weight: 400; }
 /* phone: the fast-lap badge sits closer to the name (owner) */
 @media (max-width: 899px) {
-  .tb-row .tb-name { padding-inline-end: 30px; }
+  .wall:not(.nosec) .tb-row .tb-name { padding-inline-end: 30px; }
   .tb-row { grid-template-columns: 30px 32px minmax(0,1fr) 66px 66px 40px; }
-  .tb-row > .tb-best, .tb-row.tb-cols > :nth-child(8) { margin-inline-start: -28px; margin-inline-end: 28px; }
+  .wall:not(.nosec) .tb-row > .tb-best, .wall:not(.nosec) .tb-row.tb-cols > :nth-child(8) { margin-inline-start: -28px; margin-inline-end: 28px; }
   .tb-row > .tb-gap, .tb-row.tb-cols > :nth-child(9) { text-align: center; margin-inline-start: -28px; }
 }
 
