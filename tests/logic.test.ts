@@ -441,6 +441,22 @@ test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאס�
     assert.equal(m.settings.prices?.['רגיל'], 87);
 });
 
+test('heat controls: pause freezes the clock, resume continues, restart goes back to zero', () => {
+    const base = { live: { heatId: 'h', t0: 1_000, seed: 1, speed: 1, durationMs: 600_000 } } as unknown as L.Core;
+    let c = L.pauseRun(base, 61_000);
+    assert.ok(L.isPaused(c));
+    assert.equal(L.elapsedOf(c.live, 500_000), 60_000, 'frozen while paused');
+    assert.equal(L.timeLeft(c.live, 500_000), 540_000);
+    assert.equal(L.pauseRun(c, 70_000), c, 'double pause ignored');
+    c = L.resumeRun(c, 500_000);
+    assert.ok(!L.isPaused(c));
+    assert.equal(L.elapsedOf(c.live, 510_000), 70_000, 'continues after resume');
+    assert.equal(L.elapsedOf(L.setSpeed(L.pauseRun(c, 510_000), 5, 520_000).live, 530_000), 70_000, 'speed change while paused keeps the clock');
+    const r = L.restartRun(L.pauseRun(c, 520_000), 600_000);
+    assert.equal(L.elapsedOf(r.live, 600_000), 0); assert.ok(!L.isPaused(r));
+    assert.equal(L.elapsedOf(r.live, 605_000), 5_000);
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
 

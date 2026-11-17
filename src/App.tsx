@@ -661,7 +661,7 @@ export function TrackScreen({ core, now, onClose, ext }: { core: L.Core; now: nu
         const el = L.elapsedOf(core.live, now);
         const left = L.timeLeft(core.live, now);
         const timed = left != null;
-        const sub = done ? 'הסתיים · תוצאות' : timed && left === 0 ? 'הזמן נגמר · הקפה אחרונה' : 'על המסלול · בלייב';
+        const sub = done ? 'הסתיים · תוצאות' : L.isPaused(core) ? 'המקצה עצור · דגל אדום' : timed && left === 0 ? 'הזמן נגמר · הקפה אחרונה' : 'על המסלול · בלייב';
         return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={timed ? `${sub} · ${Math.round(core.live!.durationMs! / 60_000)} דק׳` : sub} totalLaps={timed ? 0 : core.settings.laps} state={done ? 'done' : 'live'}
             clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose}
             footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} />;
@@ -688,6 +688,38 @@ type LiveProps = {
     auto: boolean; setAuto: (b: boolean) => void; openScreen: (s: 'track' | 'last') => void;
     save: () => void; start: (id: string) => void; cancel: () => void; goHeats: () => void; rx: RxState;
 };
+
+/** Race control: one bar with start, pause/resume, save, reset and cancel for the heat on track. */
+function RaceControl(p: { core: L.Core; update: Update; now: number; done: boolean; canSave: boolean; startable: L.Heat | undefined; start: (id: string) => void; save: () => void; cancel: () => void }) {
+    const heat = L.runningHeat(p.core);
+    const paused = L.isPaused(p.core);
+    const [ask, setAsk] = useState<'' | 'reset' | 'cancel'>('');
+    useEffect(() => { setAsk(''); }, [heat?.id]);
+    const left = L.timeLeft(p.core.live, p.now);
+    const state = !heat ? 'idle' : p.done ? 'done' : paused ? 'paused' : 'live';
+    const label = { idle: p.startable ? `מוכן · מקצה ${p.startable.num}` : 'אין מקצה מוכן', live: `במירוץ · מקצה ${heat?.num}`, paused: `עצור · מקצה ${heat?.num}`, done: `הסתיים · מקצה ${heat?.num}` }[state];
+    const clock = heat ? (left != null ? mmss(left) : L.fmt(L.elapsedOf(p.core.live, p.now))) : p.startable ? `${L.heatMinutesOf(p.core)}:00` : '--:--';
+    return <div className={`rc rc-${state}`} role="toolbar" aria-label="שליטה במקצה">
+        <div className="rc-status">
+            <span className="rc-dot" aria-hidden="true" />
+            <span className="rc-label">{label}</span>
+            <bdi className="rc-clock" aria-label="שעון המקצה">{clock}</bdi>
+        </div>
+        {ask ? <div className="rc-ask" role="alertdialog" aria-label="אישור">
+            <span>{ask === 'reset' ? 'לאפס את המקצה? השעון וההקפות יתחילו מאפס, אותם נהגים.' : 'לבטל את המקצה בלי לשמור? הוא יחזור לתור.'}</span>
+            <button type="button" className="rc-btn rc-danger" onClick={() => { if (ask === 'reset') p.update(c => L.restartRun(c, Date.now())); else p.cancel(); setAsk(''); }}>{ask === 'reset' ? 'כן, אפס' : 'כן, בטל'}</button>
+            <button type="button" className="rc-btn" onClick={() => setAsk('')}>חזרה</button>
+        </div> : <div className="rc-btns">
+            <button type="button" className="rc-btn rc-go" disabled={!!heat || !p.startable} onClick={() => p.startable && p.start(p.startable.id)}><i aria-hidden="true">▶</i><span>התחלה</span></button>
+            {paused
+                ? <button type="button" className="rc-btn rc-go" onClick={() => p.update(c => L.resumeRun(c, Date.now()))}><i aria-hidden="true">▶</i><span>המשך</span></button>
+                : <button type="button" className="rc-btn rc-stop" disabled={!heat || p.done} onClick={() => p.update(c => L.pauseRun(c, Date.now()))}><i aria-hidden="true">❚❚</i><span>עצירה</span></button>}
+            <button type="button" className="rc-btn rc-save" disabled={!heat || !p.canSave} onClick={p.save}><i aria-hidden="true">✓</i><span>{p.done ? 'שמירה' : 'סיום ושמירה'}</span></button>
+            <button type="button" className="rc-btn rc-reset" disabled={!heat} onClick={() => setAsk('reset')}><i aria-hidden="true">↺</i><span>איפוס</span></button>
+            <button type="button" className="rc-btn rc-cancel" disabled={!heat} onClick={() => setAsk('cancel')}><i aria-hidden="true">✕</i><span>ביטול</span></button>
+        </div>}
+    </div>;
+}
 
 function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start, cancel, goHeats, rx }: LiveProps) {
     const ext = R.extActive(rx.ext) ? rx.ext : null;
@@ -722,6 +754,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
         </div>
         <p className="meta">{auto ? autoNext : 'תור פשוט, בלי שעות: המקצים המאושרים לפי הסדר. "מסך מסלול" הוא המסך הגדול באתר: הוא עובר לבד בין קריאה, הבא בתור ומירוץ. בדמו האוטומטי המסך קורא, מציג תוצאות וממשיך לבד, אבל מקצה מתחיל רק בלחיצה על "התחל מקצה". הקופאית יכולה לשנות הרכב בכל שלב בלשונית מקצים.'}</p>
 
+        <RaceControl core={core} update={update} now={now} done={done} canSave={done || rows.some(r => r.laps > 0)} startable={!heat ? [calledH, ...qList].find(h => h && L.startBlockers(core, h).length === 0) : undefined} start={start} save={save} cancel={cancel} />
         {heat && <section className="panel ontrack" aria-label="על המסלול">
             <div className="row-actions">
                 <strong className="hnum">על המסלול · מקצה {heat.num}</strong>
@@ -741,9 +774,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
                 </li>)}
             </ol>
             <div className="row-actions">
-                <Btn kind="primary" onClick={save} disabled={!done && rows.every(r => r.laps === 0)}>{done ? 'שמור תוצאות והמשך' : 'סיים עכשיו ושמור'}</Btn>
                 <Btn onClick={() => openScreen('track')}>תצוגת מסך</Btn>
-                <Btn kind="danger" onClick={cancel}>בטל בלי לשמור</Btn>
             </div>
         </section>}
 

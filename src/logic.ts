@@ -61,7 +61,7 @@ export type Settings = {
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** durationMs set = timed heat (fixed when the heat starts). Unset = legacy lap-limited run. */
-export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number };
+export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number; pausedAt?: number };
 
 export const MIN_HEAT_MINUTES = 10;
 export const MAX_HEAT_MINUTES = 30;
@@ -406,13 +406,35 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
 }
 
 /** Simulated ms on track. Speed multiplies wall time (demo only). */
-export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, (now - live.t0) * live.speed) : 0);
+export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, ((live.pausedAt ?? now) - live.t0) * live.speed) : 0);
+
+/** Pause the heat clock (red flag): timing and countdown freeze until resumed. */
+export function pauseRun(core: Core, now: number): Core {
+    if (!core.live || core.live.pausedAt != null) return core;
+    return { ...core, live: { ...core.live, pausedAt: now } };
+}
+
+/** Resume a paused heat: the clock continues from where it stopped. */
+export function resumeRun(core: Core, now: number): Core {
+    if (!core.live || core.live.pausedAt == null) return core;
+    const { pausedAt, ...live } = core.live;
+    return { ...core, live: { ...live, t0: live.t0 + (now - pausedAt) } };
+}
+
+/** Restart the heat on track from zero (same drivers, clock and laps reset). */
+export function restartRun(core: Core, now: number): Core {
+    if (!core.live) return core;
+    const { pausedAt: _p, ...live } = core.live;
+    return { ...core, live: { ...live, t0: now } };
+}
+
+export const isPaused = (core: Core) => core.live?.pausedAt != null;
 
 /** Change simulation speed without jumping the clock. */
 export function setSpeed(core: Core, speed: number, now: number): Core {
     if (!core.live || speed <= 0) return core;
     const el = elapsedOf(core.live, now);
-    return { ...core, live: { ...core.live, speed, t0: now - el / speed } };
+    return { ...core, live: { ...core.live, speed, t0: (core.live.pausedAt ?? now) - el / speed } };
 }
 
 /** Timing for the heat on track. The feed defaults to the simulation; a real read-only feed would be passed here. */
