@@ -559,7 +559,7 @@ body { background: #0b0b0c; }
 .rc-clock { margin-inline-start: auto; font-size: 30px; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: .02em; line-height: 1; padding: 4px 12px; border-radius: 10px; background: #0a0708; border: 1px solid #2c2023; }
 .rc-live .rc-clock { color: #2ee06a; }
 .rc-paused .rc-clock { color: var(--dk-yellow); animation: rc-blink 1s steps(2, start) infinite; }
-.rc-btns { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.rc-btns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
 .rc-btn { appearance: none; font: inherit; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 68px; padding: 8px 4px; border-radius: 12px; border: 1px solid #3b2d30; background: linear-gradient(180deg, #2a2023, #1c1517); color: #f2eeee; font-weight: 800; font-size: 14px; transition: transform .12s, filter .15s, box-shadow .15s; box-shadow: 0 3px 0 #0b0708; }
 .rc-btn i { font-style: normal; font-size: 22px; line-height: 1; }
 .rc-btn:hover:not(:disabled) { filter: brightness(1.15); }
@@ -612,3 +612,5 @@ body { background: #0b0b0c; }
 .wall.lastlap .tb-sub { font-weight: 900; color: #fff; }
 @keyframes ll-head { 50% { box-shadow: 0 3px 0 var(--dk-yellow), inset 0 0 0 9999px rgba(255,255,255,.12); } }
 @media (prefers-reduced-motion: reduce) { .ll-giant, .ll-giant i, .ll-giant i::after, .ll-text, .wall.lastlap .tb-head { animation: none; } }
+
+.rc-quick { background: linear-gradient(180deg, #ff9f1c, #e3262b); border-color: #ffc46b; box-shadow: 0 3px 0 #6d1a0c, 0 0 18px rgba(255,159,28,.25); }

@@ -34,7 +34,9 @@ export type HeatStatus = 'draft' | 'approved' | 'done';
 export type DriverEdit = { name?: string; kart?: number };
 export type Heat = { id: string; num: number; status: HeatStatus; entries: Entry[]; drivers?: Record<string, DriverEdit>; called?: boolean;
     /** Shift manager (אחמ"ש) approved mixing fast and regular karts for exactly these groups (sorted ids). Any change to the groups voids it. */
-    mixOk?: string };
+    mixOk?: string;
+    /** Quick start: no registered drivers; karts join the board as the timing detects them crossing the line. */
+    open?: boolean };
 /** How karts get matched to drivers. Not decided by the venue yet, so 'unset' keeps an editable auto suggestion. */
 export type KartMode = 'unset' | 'cashier' | 'staff';
 
@@ -405,6 +407,24 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
     };
 }
 
+/** Quick start ("התחלה מהירה"): a heat with no registration. Karts are added as the timing sees them. */
+export function startOpenHeat(core: Core, now: number, seed: number, speed = 1): Core {
+    if (core.live) return core;
+    const num = core.heats.reduce((m, h) => Math.max(m, h.num), core.nextHeatNum - 1) + 1;
+    const id = `open${num}-${core.seq}`;
+    return {
+        ...core,
+        seq: core.seq + 1,
+        nextHeatNum: Math.max(core.nextHeatNum, num + 1),
+        heats: [...core.heats, { id, num, status: 'approved', entries: [], open: true }],
+        live: { heatId: id, t0: now, seed, speed, durationMs: heatMinutesOf(core) * 60_000 },
+    };
+}
+
+/** Rows to show for a heat: a quick-start heat lists only karts that have crossed the line. */
+export const detectedOnly = (core: Core, rows: DriverTiming[]): DriverTiming[] =>
+    runningHeat(core)?.open ? rows.filter(r => r.laps.length > 0) : rows;
+
 /** Simulated ms on track. Speed multiplies wall time (demo only). */
 export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, ((live.endedAt ?? live.pausedAt ?? now) - live.t0) * live.speed) : 0);
 
@@ -496,7 +516,12 @@ export function finishRun(core: Core, now: number, feed?: TimingFeed): { core: C
 }
 
 /** Stop without saving: the heat goes back to the queue (not called). */
-export const cancelRun = (core: Core): Core => ({ ...core, live: null });
+export const cancelRun = (core: Core): Core => {
+    const h = runningHeat(core);
+    // a quick-start heat has nobody to send back to the queue: it is simply dropped
+    if (h?.open) return { ...core, live: null, heats: core.heats.filter(x => x.id !== h.id) };
+    return { ...core, live: null };
+};
 
 export function addGroup(core: Core, g: Omit<Group, 'id' | 'createdAt'>, now: number): Core {
     const size = Math.max(1, Math.min(99, Math.floor(g.size)));
@@ -525,6 +550,8 @@ export function removeGroup(core: Core, groupId: string): Core {
 export type Driver = { key: string; kart: number; label: string; groupId: string; kartSet: boolean; nameSet: boolean };
 
 export function driversOf(core: Core, heat: Heat): Driver[] {
+    // quick-start heat: every kart on the fleet may show up; the board lists only those that crossed the line
+    if (heat.open) return Array.from({ length: Math.max(1, core.settings.capacity) }, (_, i) => ({ key: `k${i + 1}`, kart: i + 1, label: `קארט ${i + 1}`, groupId: '', kartSet: true, nameSet: false }));
     const ed = heat.drivers ?? {};
     const base: Driver[] = [];
     for (const e of heat.entries) {
@@ -821,7 +848,7 @@ export function kartStats(hist: Result[]): KartStat[] {
 
 export function resultOf(core: Core, heat: Heat, timing: DriverTiming[], now: number, simulated = true): Result {
     const drivers = driversOf(core, heat);
-    const ranked = rank(timing);
+    const ranked = rank(heat.open ? timing.filter(t => t.laps.length > 0) : timing);
     return {
         heatId: heat.id,
         heatNum: heat.num,

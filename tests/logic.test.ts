@@ -468,6 +468,25 @@ test('checkered flag: staff end the heat, clock stops, everyone finished; reset 
     assert.ok(!L.isEnded(L.restartRun(p, 2_000_000)));
 });
 
+test('quick start: open heat with no registration, karts appear as they cross, cancel drops it', () => {
+    let q = twoQueued();
+    q = L.startOpenHeat(q, 0, 5, 1);
+    const h = L.runningHeat(q)!;
+    assert.ok(h.open && h.entries.length === 0);
+    assert.ok(h.num > Math.max(...q.heats.filter(x => !x.open).map(x => x.num)), 'gets a fresh number');
+    assert.equal(q.live?.durationMs, 10 * 60_000);
+    assert.equal(L.detectedOnly(q, L.liveTiming(q, 5_000)).length, 0, 'nobody before the first crossing');
+    const later = L.detectedOnly(q, L.liveTiming(q, 120_000));
+    assert.ok(later.length > 0 && later.every(r => r.laps.length > 0), 'karts join after crossing the line');
+    assert.equal(L.startOpenHeat(q, 1, 1), q, 'only one heat on track');
+    const { core: done, result } = L.finishRun(L.endRun(q, 200_000), 200_000);
+    assert.ok(result && result.rows.length > 0 && result.rows.every(r => r.laps.length > 0) && result.rows[0].label.startsWith('קארט'));
+    assert.equal(done.live, null);
+    const c = L.cancelRun(L.startOpenHeat(twoQueued(), 0, 5, 1));
+    assert.ok(!c.live && !c.heats.some(x => x.open), 'cancel removes the empty quick-start heat');
+    assert.deepEqual(L.queueOf(c).map(x => x.id), L.queueOf(twoQueued()).map(x => x.id), 'the queue is untouched');
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
 
