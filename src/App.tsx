@@ -492,7 +492,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
         {p.real ? <div className="wall-sim real">זמנים מהמסלול · {p.srcName ?? 'RentiX'}</div> : <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>}
         <ol className={`tb-rows${dense ? ' dense' : ''}`}>
             <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
-            {p.rows.map(r => <li key={r.key} className={`tb-row${r.pos === 1 ? ' lead' : ''}`}>
+            {p.rows.map(r => <li key={r.key} className={`tb-row p${r.pos}${r.pos === 1 ? ' lead' : ''}`}>
                 <span className="tb-pos">{r.pos}{r.gained ? <em className={r.gained > 0 ? 'up' : 'down'}>{r.gained > 0 ? `▲${r.gained}` : `▼${-r.gained}`}</em> : null}</span>
                 <span className="tb-kart">{r.kart}</span>
                 <span className="tb-name">{r.label}</span>
