@@ -36,6 +36,9 @@ Hebrew RTL, phone-first React app. Synthetic data only. No real venue integratio
 ## RentiX live timing (ported from the gen 5 branch, 2026-11-16)
 - public/rentix-bridge.ps1 on the staff laptop reads RentiX RMonitor (TCP 192.168.0.1:50000) and serves it on
   localhost:8787. src/rentix.ts parses it; while it has drivers the track screen, Live tab and public site show it.
+- bridge/ (dk-bridge.exe, Go) replaces the ps1 on the same localhost:8787: RentiX first (read-only), else the AMB
+  decoder directly (source "decoder", transponder -> kart map in Settings). One timing path. docs/BRIDGE-HE.md.
+  Not yet tested against the real hardware.
 
 ## Heat history: permanent archive + daily/weekly reset (owner, 2026-11-16)
 - Every finished heat is inserted into Supabase table public.heat_history (docs/heat-history.sql; anon read, staff insert only).

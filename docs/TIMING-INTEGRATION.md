@@ -1,6 +1,9 @@
 # Timing integration - what a real decoder input needs (design only)
 
-Status: the demo is fully SIMULATED. No hardware has been accessed, nothing is connected,
+Update: live timing now comes from bridge/ (dk-bridge) via localhost:8787, see docs/BRIDGE-HE.md.
+The notes below are the original design notes.
+
+Status (original): the demo is fully SIMULATED. No hardware has been accessed, nothing is connected,
 no vendor has been contacted. This page records the seam and the open questions.
 
 ## Target

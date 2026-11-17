@@ -634,6 +634,19 @@ export const DEFAULT_LAP_RULES: LapRules = { minLapMs: 15000, firstCrossing: 'la
 export const simTransponder = (kart: number) => `SIM-${kart}`;
 export const transponderOf = (core: Core) => (kart: number) => core.settings.transponders?.[String(kart)] || simTransponder(kart);
 
+/**
+ * Map a transponder to a kart (Settings, used by the direct decoder board). A transponder belongs to one kart
+ * only, so it is removed from any other kart first. Empty transponder = remove the kart's mapping.
+ */
+export function setTransponder(core: Core, kart: number, tx: string): Core {
+    const k = Math.floor(kart);
+    if (!(k >= 1 && k <= 99)) return core;
+    const v = tx.trim();
+    const map = Object.fromEntries(Object.entries(core.settings.transponders ?? {}).filter(([key, x]) => key !== String(k) && (!v || x !== v)));
+    if (v) map[String(k)] = v;
+    return { ...core, settings: { ...core.settings, transponders: map } };
+}
+
 /** Pure: build each driver's laps from raw passings. Passings may arrive unsorted and with duplicates. */
 export function lapsFromPassings(
     drivers: Driver[], passings: Passing[], startT: number, totalLaps: number,
@@ -745,8 +758,27 @@ export type Result = {
     laps: number;
     /** Timed heat length in minutes (unset for legacy lap-limited runs). */
     minutes?: number;
+    /** Run name from the track timing (RentiX), when the heat came from there. */
+    title?: string;
     rows: { pos: number; kart: number; label: string; laps: number[]; best: number | null; total: number }[];
 };
+
+/** Heading of a history result: our heat number, or the run name from the track timing. */
+export const resultTitle = (r: Result) => r.title || `מקצה ${r.heatNum}`;
+
+/** Kart info (like RentiX's "Kart info" tab): per kart, its fastest lap in these results and who drove it. */
+export type KartStat = { kart: number; best: number | null; bestBy: string; bestAt: number; heats: number; laps: number; lastAt: number };
+export function kartStats(hist: Result[]): KartStat[] {
+    const m = new Map<number, KartStat>();
+    for (const r of hist) for (const x of r.rows) {
+        if (!x.kart) continue;
+        const k = m.get(x.kart) ?? { kart: x.kart, best: null, bestBy: '', bestAt: 0, heats: 0, laps: 0, lastAt: 0 };
+        k.heats++; k.laps += x.laps.length; k.lastAt = Math.max(k.lastAt, r.at);
+        if (x.best != null && (k.best == null || x.best < k.best)) { k.best = x.best; k.bestBy = x.label; k.bestAt = r.at; }
+        m.set(x.kart, k);
+    }
+    return [...m.values()].sort((a, b) => (a.best ?? Infinity) - (b.best ?? Infinity) || a.kart - b.kart);
+}
 
 export function resultOf(core: Core, heat: Heat, timing: DriverTiming[], now: number, simulated = true): Result {
     const drivers = driversOf(core, heat);
