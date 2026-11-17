@@ -450,3 +450,9 @@ body { background: #0b0b0c; }
 .kinfo .times { text-align: end; }
 .pub-tabs button { white-space: nowrap; }
 .kinfo .kcols .kart { background: none; border: 0; box-shadow: none; color: inherit; font-size: 12px; font-weight: 400; }
+/* phone: the fast-lap badge sits closer to the name (owner) */
+@media (max-width: 899px) {
+  .tb-row .tb-name { padding-inline-end: 30px; }
+  .tb-row { grid-template-columns: 30px 32px minmax(0,1fr) 66px 66px 40px; }
+  .tb-row > .tb-best, .tb-row.tb-cols > :nth-child(8) { margin-inline-start: -28px; margin-inline-end: 28px; }
+}
