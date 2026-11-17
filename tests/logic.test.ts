@@ -150,7 +150,7 @@ test('queue -> call -> start -> live -> finish -> next heat on screen', () => {
     assert.equal(mid.length, 3);
     assert.ok(!L.allFinished(mid));
     const end = 1_000 + 10 ** 6;
-    assert.ok(L.allFinished(L.liveTiming(q, end)));
+    assert.ok(!L.allFinished(L.liveTiming(q, end)), 'a timed heat never ends by itself: staff stop it');
     const { core: after, result } = L.finishRun(q, end);
     assert.ok(result && result.rows.length === 3 && result.simulated && result.heatNum === h1.num);
     assert.equal(after.live, null);
@@ -267,11 +267,10 @@ test('old saved data without live/called fields still works', () => {
     assert.equal(L.screenState(s).state, 'race');
 });
 
-test('race clock freezes at the last finisher', () => {
+test('race clock keeps running until staff stop a timed heat', () => {
     let q = L.startHeat(twoQueued(), 'h1', 0, 9, 1);
     const late = L.liveTiming(q, 10 ** 7);
-    const last = Math.max(...late.map(r => r.total));
-    assert.equal(L.raceClock(late, 10 ** 7), last);
+    assert.equal(L.raceClock(late, 10 ** 7), 10 ** 7);
     const early = L.liveTiming(q, 1000);
     assert.equal(L.raceClock(early, 1000), 1000);
 });
@@ -365,12 +364,11 @@ test('timed heat: default 10 min, 20 possible, min 10; ends after the lap in pro
     const atEnd = L.liveTiming(q, 20 * 60_000 - 1);
     assert.ok(!L.allFinished(atEnd), 'not finished before the clock runs out');
     assert.equal(L.timeLeft(q.live, 21 * 60_000), 0);
-    const after = L.liveTiming(q, 22 * 60_000); // > 20 min + one lap (laps are under 50 s)
-    assert.ok(L.allFinished(after), 'everyone finishes the lap in progress');
-    for (const r of after) {
-        assert.ok(r.total >= 20 * 60_000, 'last lap crosses after the clock ran out');
-        assert.ok(r.total - r.laps[r.laps.length - 1] < 20 * 60_000, 'no extra lap after that');
-    }
+    assert.ok(!L.isLastLap(q.live, 19 * 60_000 + 29_000), 'no last-lap call before 30 s to go');
+    assert.ok(L.isLastLap(q.live, 19 * 60_000 + 30_000), 'last-lap call at 19:30 of 20 minutes');
+    const after = L.liveTiming(q, 22 * 60_000);
+    assert.ok(!L.allFinished(after), 'time up does not stop the heat: staff stop it');
+    assert.ok(after.some(r => r.total > 20 * 60_000 + 60_000), 'karts keep lapping after the clock ran out');
     assert.ok(after[0].laps.length > 8, 'a 20 minute heat is not capped at the old lap count');
     const { result } = L.finishRun(q, 22 * 60_000);
     assert.equal(result?.minutes, 20);
@@ -441,6 +439,54 @@ test('price board defaults: רגיל 87, זוגי 100 per two-seat kart, מאס�
     assert.equal(m.settings.prices?.['רגיל'], 87);
 });
 
+test('heat controls: pause freezes the clock, resume continues, restart goes back to zero', () => {
+    const base = { live: { heatId: 'h', t0: 1_000, seed: 1, speed: 1, durationMs: 600_000 } } as unknown as L.Core;
+    let c = L.pauseRun(base, 61_000);
+    assert.ok(L.isPaused(c));
+    assert.equal(L.elapsedOf(c.live, 500_000), 60_000, 'frozen while paused');
+    assert.equal(L.timeLeft(c.live, 500_000), 540_000);
+    assert.equal(L.pauseRun(c, 70_000), c, 'double pause ignored');
+    c = L.resumeRun(c, 500_000);
+    assert.ok(!L.isPaused(c));
+    assert.equal(L.elapsedOf(c.live, 510_000), 70_000, 'continues after resume');
+    assert.equal(L.elapsedOf(L.setSpeed(L.pauseRun(c, 510_000), 5, 520_000).live, 530_000), 70_000, 'speed change while paused keeps the clock');
+    const r = L.restartRun(L.pauseRun(c, 520_000), 600_000);
+    assert.equal(L.elapsedOf(r.live, 600_000), 0); assert.ok(!L.isPaused(r));
+    assert.equal(L.elapsedOf(r.live, 605_000), 5_000);
+});
+
+test('checkered flag: staff end the heat, clock stops, everyone finished; reset clears it', () => {
+    let q = L.startHeat(twoQueued(), 'h1', 0, 9, 1);
+    assert.ok(!L.allFinished(L.liveTiming(q, 700_000)), 'time up alone does not end it');
+    q = L.endRun(q, 700_000);
+    assert.ok(L.isEnded(q) && !L.isPaused(q));
+    assert.equal(L.elapsedOf(q.live, 900_000), 700_000, 'clock stopped at the flag');
+    assert.ok(L.allFinished(L.liveTiming(q, 900_000)));
+    assert.equal(L.pauseRun(q, 800_000), q, 'no pause after the flag');
+    const p = L.endRun(L.pauseRun(L.restartRun(q, 1_000_000), 1_060_000), 1_200_000);
+    assert.equal(L.elapsedOf(p.live, 1_300_000), 60_000, 'flag while paused ends at the pause');
+    assert.ok(!L.isEnded(L.restartRun(p, 2_000_000)));
+});
+
+test('quick start: open heat with no registration, karts appear as they cross, cancel drops it', () => {
+    let q = twoQueued();
+    q = L.startOpenHeat(q, 0, 5, 1);
+    const h = L.runningHeat(q)!;
+    assert.ok(h.open && h.entries.length === 0);
+    assert.ok(h.num > Math.max(...q.heats.filter(x => !x.open).map(x => x.num)), 'gets a fresh number');
+    assert.equal(q.live?.durationMs, 10 * 60_000);
+    assert.equal(L.detectedOnly(q, L.liveTiming(q, 5_000)).length, 0, 'nobody before the first crossing');
+    const later = L.detectedOnly(q, L.liveTiming(q, 120_000));
+    assert.ok(later.length > 0 && later.every(r => r.laps.length > 0), 'karts join after crossing the line');
+    assert.equal(L.startOpenHeat(q, 1, 1), q, 'only one heat on track');
+    const { core: done, result } = L.finishRun(L.endRun(q, 200_000), 200_000);
+    assert.ok(result && result.rows.length > 0 && result.rows.every(r => r.laps.length > 0) && result.rows[0].label.startsWith('קארט'));
+    assert.equal(done.live, null);
+    const c = L.cancelRun(L.startOpenHeat(twoQueued(), 0, 5, 1));
+    assert.ok(!c.live && !c.heats.some(x => x.open), 'cancel removes the empty quick-start heat');
+    assert.deepEqual(L.queueOf(c).map(x => x.id), L.queueOf(twoQueued()).map(x => x.id), 'the queue is untouched');
+});
+
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) process.exit(1);
 
@@ -504,4 +550,47 @@ test('RentiX feed (RMonitor) -> board: names, karts, laps, best, last, order; re
     assert.equal(R.parseRMonitor([...lines, '$I,"16:10:00","16 Nov 26"'], 2).rows.length, 0, 'a reset starts a new session');
     assert.deepEqual(R.splitRecord('$A,"a,b","x""y",3'), ['$A', 'a,b', 'x"y', '3']);
     assert.equal(R.timeMs('01:02:03.5'), 3_723_500); assert.equal(R.timeMs(''), null);
+});
+
+test('direct decoder board (dk-bridge): transponders mapped to karts in Settings, unmapped listed', () => {
+    // lines exactly as dk-bridge renders a decoder heat
+    const lines = ['$I,"20:49:37.614","decoder"', '$B,1,"מקצה 1 · דקודר"', '$F,"","00:00:00","20:49:47","00:01:21.000","Green"',
+        '$A,"1118533","",1118533,"","","",""', '$A,"237062","",237062,"","","",""',
+        '$G,1,"1118533",2,"00:01:20.000"', '$H,1,"1118533",0,"00:00:39.000"', '$G,2,"237062",1,"00:00:43.000"',
+        '$J,"1118533","00:00:41.000","00:00:41.000"', '$J,"1118533","00:00:39.000","00:01:20.000"', '$J,"237062","00:00:43.000","00:00:43.000"'];
+    const ext = R.parseRMonitor(lines, 1, 'decoder');
+    assert.equal(ext.src, 'decoder'); assert.equal(ext.rows[0].tx, '1118533'); assert.equal(ext.rows[0].best, 39_000);
+    let c = L.initialCore();
+    c = L.setTransponder(c, 7, '1118533');
+    c = L.setTransponder(c, 3, '1118533'); // moved: one transponder, one kart
+    assert.deepEqual(c.settings.transponders, { '3': '1118533' });
+    const m = R.withKarts(ext, c.settings.transponders);
+    assert.equal(m.rows[0].kart, 3); assert.equal(m.rows[0].name, 'קארט 3');
+    assert.deepEqual(R.unmappedTx(m, c.settings.transponders), ['237062']);
+    assert.equal(m.rows[1].kart, 0); assert.equal(m.rows[1].name, 'טרנספונדר 237062', 'an unmapped transponder is not shown as a kart number');
+    // RentiX boards keep RentiX's own kart numbers
+    const rx = R.parseRMonitor(['$A,"5","5",1118533,"Dana","K","",1', '$G,1,"5",1,"00:00:40.000"'], 1);
+    assert.equal(R.withKarts(rx, c.settings.transponders).rows[0].kart, 5);
+    assert.equal(R.sourceName('decoder'), 'דקודר AMB'); assert.equal(R.sourceName('rentix'), 'RentiX');
+});
+
+test('RentiX-style sections: finished track run -> real history result; kart info per kart', () => {
+    const lines = ['$I,"21:00:00.000","x"', '$B,12,"Heat 12"', '$F,0,"00:00:00","21:10:00","00:10:00.000","Finish"',
+        '$A,"5","5",111,"Kart","5","",1', '$A,"7","7",222,"Kart","7","",1',
+        '$G,1,"5",2,"00:00:56.000"', '$G,2,"7",2,"00:00:57.000"', '$H,1,"5",2,"00:00:27.420"', '$H,2,"7",1,"00:00:27.960"',
+        '$J,"5","00:00:28.580","00:00:28.580"', '$J,"5","00:00:27.420","00:00:56.000"', '$J,"7","00:00:27.960","00:00:27.960"', '$J,"7","00:00:29.040","00:00:57.000"'];
+    const ext = R.parseRMonitor(lines, 1);
+    assert.ok(R.extDone(ext));
+    assert.deepEqual(ext.rows[0].lapTimes, [28_580, 27_420]);
+    const id = R.extRunId(ext);
+    assert.equal(R.extRunId(R.parseRMonitor(lines, 999)), id, 'same run, same id (saved once)');
+    const res = R.extResult(ext, 5000);
+    assert.equal(res.simulated, false); assert.equal(res.heatNum, 12); assert.equal(L.resultTitle(res), 'Heat 12');
+    assert.equal(res.rows[0].kart, 5); assert.equal(res.rows[0].best, 27_420); assert.equal(res.rows[0].total, 56_000);
+    // kart info across two heats: kart 5's best is from the second heat
+    const res2: L.Result = { ...res, heatId: 'b', at: 9000, title: 'Heat 13', rows: [{ pos: 1, kart: 5, label: 'Dana', laps: [27_000, 27_500], best: 27_000, total: 54_500 }] };
+    const ks = L.kartStats([res2, res]);
+    assert.equal(ks[0].kart, 5); assert.equal(ks[0].best, 27_000); assert.equal(ks[0].bestBy, 'Dana'); assert.equal(ks[0].heats, 2); assert.equal(ks[0].laps, 4);
+    assert.equal(ks[1].kart, 7); assert.equal(ks[1].best, 27_960);
+    assert.equal(L.resultTitle({ ...res, title: undefined }), 'מקצה 12');
 });

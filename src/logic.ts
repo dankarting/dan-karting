@@ -34,7 +34,9 @@ export type HeatStatus = 'draft' | 'approved' | 'done';
 export type DriverEdit = { name?: string; kart?: number };
 export type Heat = { id: string; num: number; status: HeatStatus; entries: Entry[]; drivers?: Record<string, DriverEdit>; called?: boolean;
     /** Shift manager (אחמ"ש) approved mixing fast and regular karts for exactly these groups (sorted ids). Any change to the groups voids it. */
-    mixOk?: string };
+    mixOk?: string;
+    /** Quick start: no registered drivers; karts join the board as the timing detects them crossing the line. */
+    open?: boolean };
 /** How karts get matched to drivers. Not decided by the venue yet, so 'unset' keeps an editable auto suggestion. */
 export type KartMode = 'unset' | 'cashier' | 'staff';
 
@@ -61,7 +63,7 @@ export type Settings = {
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** durationMs set = timed heat (fixed when the heat starts). Unset = legacy lap-limited run. */
-export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number };
+export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number; pausedAt?: number; endedAt?: number };
 
 export const MIN_HEAT_MINUTES = 10;
 export const MAX_HEAT_MINUTES = 30;
@@ -405,14 +407,61 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
     };
 }
 
+/** Quick start ("התחלה מהירה"): a heat with no registration. Karts are added as the timing sees them. */
+export function startOpenHeat(core: Core, now: number, seed: number, speed = 1): Core {
+    if (core.live) return core;
+    const num = core.heats.reduce((m, h) => Math.max(m, h.num), core.nextHeatNum - 1) + 1;
+    const id = `open${num}-${core.seq}`;
+    return {
+        ...core,
+        seq: core.seq + 1,
+        nextHeatNum: Math.max(core.nextHeatNum, num + 1),
+        heats: [...core.heats, { id, num, status: 'approved', entries: [], open: true }],
+        live: { heatId: id, t0: now, seed, speed, durationMs: heatMinutesOf(core) * 60_000 },
+    };
+}
+
+/** Rows to show for a heat: a quick-start heat lists only karts that have crossed the line. */
+export const detectedOnly = (core: Core, rows: DriverTiming[]): DriverTiming[] =>
+    runningHeat(core)?.open ? rows.filter(r => r.laps.length > 0) : rows;
+
 /** Simulated ms on track. Speed multiplies wall time (demo only). */
-export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, (now - live.t0) * live.speed) : 0);
+export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, ((live.endedAt ?? live.pausedAt ?? now) - live.t0) * live.speed) : 0);
+
+/** Pause the heat clock (red flag): timing and countdown freeze until resumed. */
+export function pauseRun(core: Core, now: number): Core {
+    if (!core.live || core.live.pausedAt != null || core.live.endedAt != null) return core;
+    return { ...core, live: { ...core.live, pausedAt: now } };
+}
+
+/** Resume a paused heat: the clock continues from where it stopped. */
+export function resumeRun(core: Core, now: number): Core {
+    if (!core.live || core.live.pausedAt == null) return core;
+    const { pausedAt, ...live } = core.live;
+    return { ...core, live: { ...live, t0: live.t0 + (now - pausedAt) } };
+}
+
+/** Restart the heat on track from zero (same drivers, clock and laps reset). */
+export function restartRun(core: Core, now: number): Core {
+    if (!core.live) return core;
+    const { pausedAt: _p, endedAt: _e, ...live } = core.live;
+    return { ...core, live: { ...live, t0: now } };
+}
+
+export const isPaused = (core: Core) => core.live?.pausedAt != null && core.live?.endedAt == null;
+
+/** Checkered flag: staff end the heat. The clock stops, results and podium show; "save" then archives it. */
+export function endRun(core: Core, now: number): Core {
+    if (!core.live || core.live.endedAt != null) return core;
+    return { ...core, live: { ...core.live, endedAt: core.live.pausedAt ?? now } };
+}
+export const isEnded = (core: Core) => core.live?.endedAt != null;
 
 /** Change simulation speed without jumping the clock. */
 export function setSpeed(core: Core, speed: number, now: number): Core {
     if (!core.live || speed <= 0) return core;
     const el = elapsedOf(core.live, now);
-    return { ...core, live: { ...core.live, speed, t0: now - el / speed } };
+    return { ...core, live: { ...core.live, speed, t0: (core.live.pausedAt ?? now) - el / speed } };
 }
 
 /** Timing for the heat on track. The feed defaults to the simulation; a real read-only feed would be passed here. */
@@ -420,7 +469,8 @@ export function liveTiming(core: Core, now: number, feed?: TimingFeed): DriverTi
     const h = runningHeat(core);
     if (!h || !core.live) return [];
     const drivers = driversOf(core, h), el = elapsedOf(core.live, now);
-    if (core.live.durationMs) return timedTiming((feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, TIMED_LAP_CAP), core.live.durationMs);
+    // timed heat: never ends by itself (owner 2026-11-17). Karts keep lapping until staff press stop/save.
+    if (core.live.durationMs) return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, TIMED_LAP_CAP).map(r => ({ ...r, finished: core.live!.endedAt != null }));
     return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, core.settings.laps);
 }
 
@@ -437,6 +487,15 @@ export function timedTiming(rows: DriverTiming[], durationMs: number): DriverTim
         const done = t >= durationMs;
         return { ...r, laps, total: laps.length ? t : 0, best: laps.length ? Math.min(...laps) : null, last: laps.length ? laps[laps.length - 1] : null, finished: done };
     });
+}
+
+/** Seconds before the end of a timed heat when the last-lap call goes up (9:30 in a 10-minute heat). */
+export const LAST_LAP_MS = 30_000;
+
+/** Last-lap phase of a timed heat: from 30 s before the end until staff stop it. */
+export function isLastLap(live: LiveRun | null | undefined, now: number): boolean {
+    const left = timeLeft(live, now);
+    return left != null && left <= LAST_LAP_MS;
 }
 
 /** Time left on a timed heat (0 when over). Null for a legacy lap-limited run. */
@@ -457,7 +516,12 @@ export function finishRun(core: Core, now: number, feed?: TimingFeed): { core: C
 }
 
 /** Stop without saving: the heat goes back to the queue (not called). */
-export const cancelRun = (core: Core): Core => ({ ...core, live: null });
+export const cancelRun = (core: Core): Core => {
+    const h = runningHeat(core);
+    // a quick-start heat has nobody to send back to the queue: it is simply dropped
+    if (h?.open) return { ...core, live: null, heats: core.heats.filter(x => x.id !== h.id) };
+    return { ...core, live: null };
+};
 
 export function addGroup(core: Core, g: Omit<Group, 'id' | 'createdAt'>, now: number): Core {
     const size = Math.max(1, Math.min(99, Math.floor(g.size)));
@@ -486,6 +550,8 @@ export function removeGroup(core: Core, groupId: string): Core {
 export type Driver = { key: string; kart: number; label: string; groupId: string; kartSet: boolean; nameSet: boolean };
 
 export function driversOf(core: Core, heat: Heat): Driver[] {
+    // quick-start heat: every kart on the fleet may show up; the board lists only those that crossed the line
+    if (heat.open) return Array.from({ length: Math.max(1, core.settings.capacity) }, (_, i) => ({ key: `k${i + 1}`, kart: i + 1, label: `קארט ${i + 1}`, groupId: '', kartSet: true, nameSet: false }));
     const ed = heat.drivers ?? {};
     const base: Driver[] = [];
     for (const e of heat.entries) {
@@ -634,6 +700,19 @@ export const DEFAULT_LAP_RULES: LapRules = { minLapMs: 15000, firstCrossing: 'la
 export const simTransponder = (kart: number) => `SIM-${kart}`;
 export const transponderOf = (core: Core) => (kart: number) => core.settings.transponders?.[String(kart)] || simTransponder(kart);
 
+/**
+ * Map a transponder to a kart (Settings, used by the direct decoder board). A transponder belongs to one kart
+ * only, so it is removed from any other kart first. Empty transponder = remove the kart's mapping.
+ */
+export function setTransponder(core: Core, kart: number, tx: string): Core {
+    const k = Math.floor(kart);
+    if (!(k >= 1 && k <= 99)) return core;
+    const v = tx.trim();
+    const map = Object.fromEntries(Object.entries(core.settings.transponders ?? {}).filter(([key, x]) => key !== String(k) && (!v || x !== v)));
+    if (v) map[String(k)] = v;
+    return { ...core, settings: { ...core.settings, transponders: map } };
+}
+
 /** Pure: build each driver's laps from raw passings. Passings may arrive unsorted and with duplicates. */
 export function lapsFromPassings(
     drivers: Driver[], passings: Passing[], startT: number, totalLaps: number,
@@ -745,12 +824,31 @@ export type Result = {
     laps: number;
     /** Timed heat length in minutes (unset for legacy lap-limited runs). */
     minutes?: number;
+    /** Run name from the track timing (RentiX), when the heat came from there. */
+    title?: string;
     rows: { pos: number; kart: number; label: string; laps: number[]; best: number | null; total: number }[];
 };
 
+/** Heading of a history result: our heat number, or the run name from the track timing. */
+export const resultTitle = (r: Result) => r.title || `מקצה ${r.heatNum}`;
+
+/** Kart info (like RentiX's "Kart info" tab): per kart, its fastest lap in these results and who drove it. */
+export type KartStat = { kart: number; best: number | null; bestBy: string; bestAt: number; heats: number; laps: number; lastAt: number };
+export function kartStats(hist: Result[]): KartStat[] {
+    const m = new Map<number, KartStat>();
+    for (const r of hist) for (const x of r.rows) {
+        if (!x.kart) continue;
+        const k = m.get(x.kart) ?? { kart: x.kart, best: null, bestBy: '', bestAt: 0, heats: 0, laps: 0, lastAt: 0 };
+        k.heats++; k.laps += x.laps.length; k.lastAt = Math.max(k.lastAt, r.at);
+        if (x.best != null && (k.best == null || x.best < k.best)) { k.best = x.best; k.bestBy = x.label; k.bestAt = r.at; }
+        m.set(x.kart, k);
+    }
+    return [...m.values()].sort((a, b) => (a.best ?? Infinity) - (b.best ?? Infinity) || a.kart - b.kart);
+}
+
 export function resultOf(core: Core, heat: Heat, timing: DriverTiming[], now: number, simulated = true): Result {
     const drivers = driversOf(core, heat);
-    const ranked = rank(timing);
+    const ranked = rank(heat.open ? timing.filter(t => t.laps.length > 0) : timing);
     return {
         heatId: heat.id,
         heatNum: heat.num,
