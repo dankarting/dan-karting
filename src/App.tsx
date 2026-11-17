@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Callout, Closing, CopyButton, FileCard, Group, Header, useLocalState } from '@instinct/files';
 import * as L from './logic';
 import * as Cloud from './cloud';
@@ -468,6 +468,8 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
 function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string }) {
     useEscape(p.onClose);
     const dense = p.rows.length > 10;
+    const listRef = useRef<HTMLOListElement>(null);
+    useRankAnimation(listRef, p.rows.map(r => r.key).join('|'));
     const nosec = !!p.real; // real track timing: no gap column (as on the RentiX screen)
     // podium at the end of a heat: shown for a few seconds over the results, tap to close
     const [podium, setPodium] = useState(false);
@@ -490,9 +492,9 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
             <button type="button" className="wall-close" onClick={p.onClose} aria-label="סגור תצוגת מסך">✕</button>
         </header>
         {p.real ? <div className="wall-sim real">זמנים מהמסלול · {p.srcName ?? 'RentiX'}</div> : <div className="wall-sim">סימולציה · נתוני דמה · לא שעון אמיתי</div>}
-        <ol className={`tb-rows${dense ? ' dense' : ''}`}>
+        <ol ref={listRef} className={`tb-rows${dense ? ' dense' : ''}`}>
             <li className="tb-row tb-cols" aria-hidden="true"><span>מק׳</span><span>קארט</span><span>נהג</span><span>אחרונה</span><span>הקפה מהירה</span><span>פער</span><span>הקפות</span></li>
-            {p.rows.map(r => <li key={r.key} className={`tb-row p${r.pos}${r.pos === 1 ? ' lead' : ''}`}>
+            {p.rows.map(r => <li key={r.key} data-k={r.key} className={`tb-row p${r.pos}${r.pos === 1 ? ' lead' : ''}`}>
                 <span className="tb-pos">{r.pos}{r.gained ? <em className={r.gained > 0 ? 'up' : 'down'}>{r.gained > 0 ? `▲${r.gained}` : `▼${-r.gained}`}</em> : null}</span>
                 <span className="tb-kart">{r.kart}</span>
                 <span className="tb-name">{r.label}</span>
@@ -506,6 +508,29 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
         {p.footer && <div className="call-next">{p.footer}</div>}
         {podium && <Podium title={p.title} rows={p.rows} onClose={() => setPodium(false)} />}
     </div>;
+}
+
+/** Rows that change place slide to their new spot; a row that climbs flashes green, one that drops flashes red. */
+function useRankAnimation(list: React.RefObject<HTMLOListElement>, order: string) {
+    const prev = useRef(new Map<string, { top: number; idx: number }>());
+    useLayoutEffect(() => {
+        const ol = list.current;
+        if (!ol) return;
+        const rows = [...ol.querySelectorAll<HTMLElement>('li[data-k]')];
+        const next = new Map<string, { top: number; idx: number }>();
+        rows.forEach((el, idx) => next.set(el.dataset.k!, { top: el.getBoundingClientRect().top, idx }));
+        const calm = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (!calm && typeof rows[0]?.animate === 'function') rows.forEach(el => {
+            const was = prev.current.get(el.dataset.k!), now = next.get(el.dataset.k!)!;
+            if (!was || was.idx === now.idx) return;
+            const dy = was.top - now.top;
+            const up = now.idx < was.idx;
+            el.animate([{ transform: `translateY(${dy}px)`, zIndex: up ? 2 : 1 }, { transform: 'translateY(0)', zIndex: up ? 2 : 1 }], { duration: 700, easing: 'cubic-bezier(.2,.8,.2,1)' });
+            const glow = up ? 'rgba(46,224,106,.55)' : 'rgba(255,80,86,.45)';
+            el.animate([{ outline: `2px solid ${glow}`, filter: 'brightness(1.35)' }, { outline: '2px solid transparent', filter: 'brightness(1)' }], { duration: 1600, easing: 'ease-out' });
+        });
+        prev.current = next;
+    }, [order, list]);
 }
 
 /** End-of-heat podium: 2nd, 1st, 3rd rise up with name, kart and best lap; confetti falls. Tap to see the full results. */
@@ -595,7 +620,9 @@ function ExtWall({ ext, onClose }: { ext: R.ExtBoard; onClose: () => void }) {
     const lead = ext.rows[0];
     const bAll = Math.min(...ext.rows.map(r => r.best ?? Infinity));
     const done = /finish|checker/i.test(ext.flag);
-    const rows: BoardRow[] = ext.rows.map((r, i) => ({ key: `${r.kart}-${i}`, pos: r.pos, kart: r.kart, label: r.name, laps: r.laps, best: r.best, last: r.last,
+    const seen = new Set<string>(); // stable key per driver so a place change animates
+    const keyOf = (r: { kart: number; name: string }, i: number) => { let k = `${r.kart}-${r.name}`; if (seen.has(k)) k += `-${i}`; seen.add(k); return k; };
+    const rows: BoardRow[] = ext.rows.map((r, i) => ({ key: keyOf(r, i), pos: r.pos, kart: r.kart, label: r.name, laps: r.laps, best: r.best, last: r.last,
         gap: i === 0 || r.total == null || lead.total == null ? '' : r.laps === lead.laps ? `+${L.fmt(Math.max(0, r.total - lead.total))}`
             // fewer laps: the leader's race time when it had done as many laps
             : lead.lapTimes && lead.lapTimes.length === lead.laps && r.laps > 0 ? `+${L.fmt(Math.max(0, r.total - (lead.total - lead.lapTimes.slice(r.laps).reduce((a, b) => a + b, 0))))}` : '',
