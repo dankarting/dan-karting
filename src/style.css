@@ -244,12 +244,12 @@ body { background: #0b0b0c; }
 .tb-flag { width: 40px; height: 26px; border-radius: 3px; flex: none; background: conic-gradient(#fff 25%, #111 0 50%, #fff 0 75%, #111 0) 0 0 / 10px 10px; box-shadow: 0 0 0 2px #fff; }
 
 .tb-rows { list-style: none; margin: 4px 0 0; padding: 0 10px; display: flex; flex-direction: column; gap: 3px; }
-.tb-row { display: grid; grid-template-columns: 40px 38px minmax(0,1fr) 78px 64px; gap: 8px; align-items: center; padding: 7px 8px; font-size: 15px; font-weight: 700; background: rgba(20,14,15,.92); border-radius: 4px; font-variant-numeric: tabular-nums; }
+.tb-row { display: grid; grid-template-columns: 30px 32px minmax(0,1fr) 66px 66px 40px; gap: 6px; align-items: center; padding: 7px 8px; font-size: 15px; font-weight: 700; background: rgba(20,14,15,.92); border-radius: 4px; font-variant-numeric: tabular-nums; }
 .tb-row:nth-child(odd):not(.tb-cols) { background: rgba(30,20,22,.92); }
 .tb-row.tb-cols { background: none; font-size: 10px; color: #c9a9ab; font-weight: 700; padding-block: 2px; }
 .tb-row.lead { box-shadow: inset -4px 0 0 var(--dk-yellow); }
-/* phone: pos, kart, name, best, gap */
-.tb-row > :nth-child(4), .tb-row > :nth-child(5), .tb-row > :nth-child(6), .tb-row > :nth-child(7), .tb-row > :nth-child(10) { display: none; }
+/* phone: pos, kart, name, best, gap, laps */
+.tb-row > :nth-child(4), .tb-row > :nth-child(5), .tb-row > :nth-child(6), .tb-row > :nth-child(7) { display: none; }
 .tb-pos { font-size: 20px; font-weight: 900; text-align: center; position: relative; line-height: 1; }
 .tb-pos em { display: block; font-style: normal; font-size: 9px; font-weight: 800; margin-top: 2px; }
 .tb-pos em.up { color: #2ee06a; } .tb-pos em.down { color: #ff6b70; }
@@ -261,7 +261,7 @@ body { background: #0b0b0c; }
 .tb-last { text-align: end; color: #f2f2f2; }
 .tb-best { text-align: center; background: linear-gradient(90deg, #c4161c, #e3262b); color: #fff; border-radius: 3px; padding: 2px 6px; transform: skewX(-10deg); font-weight: 900; }
 .tb-best.ob { background: linear-gradient(90deg, #7b2cbf, #c77dff); }
-.tb-gap { text-align: end; color: #d8d0cd; font-size: 13px; }
+.tb-gap { text-align: end; color: #d8d0cd; font-size: 12px; white-space: nowrap; }
 .tb-laps { text-align: center; color: #cfc6c3; }
 .tb-legend { margin: 8px 16px 0; font-size: 11px; color: #a99; }
 .tb-rows.dense .tb-row { padding-block: 4px; font-size: 13px; }
