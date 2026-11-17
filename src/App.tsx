@@ -759,6 +759,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
 function History({ hist, pub }: { hist: L.Result[]; pub?: boolean }) {
     const [q, setQ] = useState('');
     const [open, setOpen] = useState<string | null>(null);
+    const [openRow, setOpenRow] = useState<string | null>(null);
     const shown = hist.filter(r => !q.trim() || r.rows.some(x => x.label.includes(q.trim())));
     return <Group label="היסטוריית מקצים" heading>
         <label className="field"><span className="flabel">חיפוש לפי שם</span>
@@ -777,11 +778,22 @@ function History({ hist, pub }: { hist: L.Result[]; pub?: boolean }) {
                         <span aria-hidden="true">{isOpen ? '▴' : '▾'}</span>
                     </button>
                     {isOpen && <ol className="board">
-                        {r.rows.map(x => <li key={x.pos} className={`brow${q2 && x.label.includes(q2) ? ' hit' : ''}`}>
-                            <span className="pos">{x.pos}</span><span className="kart">{x.kart}</span>
-                            <span className="who">{x.label}<small>{r.minutes ? `${x.laps.length} הקפות` : `${x.laps.length}/${r.laps} הקפות`}</small></span>
-                            <span className="times"><b><bdi>{L.fmt(x.best)}</bdi></b><small>סה״כ <bdi>{L.fmt(x.total)}</bdi></small></span>
-                        </li>)}
+                        {r.rows.map(x => {
+                            const rk = `${id}-${x.pos}`;
+                            const lapsOpen = openRow === rk;
+                            return <li key={x.pos} className={`brow-wrap${q2 && x.label.includes(q2) ? ' hit' : ''}`}>
+                                <button type="button" className="brow brow-btn" aria-expanded={lapsOpen} onClick={() => setOpenRow(lapsOpen ? null : rk)} disabled={x.laps.length === 0}>
+                                    <span className="pos">{x.pos}</span><span className="kart">{x.kart}</span>
+                                    <span className="who">{x.label}<small>{r.minutes ? `${x.laps.length} הקפות` : `${x.laps.length}/${r.laps} הקפות`}{x.laps.length ? (lapsOpen ? ' · ▴' : ' · זמני הקפות ▾') : ''}</small></span>
+                                    <span className="times"><b><bdi>{L.fmt(x.best)}</bdi></b><small>סה״כ <bdi>{L.fmt(x.total)}</bdi></small></span>
+                                </button>
+                                {lapsOpen && <ol className="laplist" aria-label={`זמני הקפות · ${x.label}`}>
+                                    {x.laps.map((ms, n) => <li key={n} className={ms === x.best ? 'best' : ''}>
+                                        <span>הקפה {n + 1}</span><bdi>{L.fmt(ms)}</bdi>
+                                    </li>)}
+                                </ol>}
+                            </li>;
+                        })}
                     </ol>}
                 </li>;
             })}
