@@ -470,6 +470,15 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
     useEscape(p.onClose);
     const dense = p.rows.length > 10;
     const nosec = p.rows.every(r => !r.sectors);
+    // podium at the end of a heat: shown for a few seconds over the results, tap to close
+    const [podium, setPodium] = useState(false);
+    const podKey = p.state === 'done' && p.rows.length > 0 ? p.title : '';
+    useEffect(() => {
+        if (!podKey) { setPodium(false); return; }
+        setPodium(true);
+        const t = setTimeout(() => setPodium(false), 14_000);
+        return () => clearTimeout(t);
+    }, [podKey]);
     return <div className={`wall tboard${nosec ? ' nosec' : ''}`} role="dialog" aria-label="לוח זמנים">
         <header className="tb-head">
             <Logo big />
@@ -497,6 +506,28 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
         </ol>
         <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה{nosec ? '' : <> · <span className="pb">ירוק</span> שיא אישי · ▲▼ מקומות לעומת הזינוק</>}</div>
         {p.footer && <div className="call-next">{p.footer}</div>}
+        {podium && <Podium title={p.title} rows={p.rows} onClose={() => setPodium(false)} />}
+    </div>;
+}
+
+/** End-of-heat podium: 2nd, 1st, 3rd rise up with name, kart and best lap; confetti falls. Tap to see the full results. */
+function Podium({ title, rows, onClose }: { title: string; rows: BoardRow[]; onClose: () => void }) {
+    const top = [rows[1], rows[0], rows[2]];
+    const conf = React.useMemo(() => Array.from({ length: 36 }, (_, i) => ({ l: (i * 37) % 100, d: (i % 9) * 0.35, c: ['#e3262b', '#ffd400', '#ffffff', '#c77dff'][i % 4], r: (i * 53) % 360 })), []);
+    return <div className="podium" role="dialog" aria-label={`פודיום · ${title}`} onClick={onClose}>
+        <div className="pd-conf" aria-hidden="true">{conf.map((c, i) => <i key={i} style={{ left: `${c.l}%`, animationDelay: `${c.d}s`, background: c.c, rotate: `${c.r}deg` } as React.CSSProperties} />)}</div>
+        <div className="pd-title"><span>פודיום</span><b>{title}</b></div>
+        <div className="pd-stage">
+            {top.map((r, i) => r ? <div key={r.key} className={`pd-col p${r.pos}`} style={{ '--d': `${[0.9, 1.6, 0.3][i]}s` } as React.CSSProperties}>
+                <div className="pd-who">
+                    <Avatar kart={r.kart} label={r.label} />
+                    <div className="pd-name">{r.label}</div>
+                    <div className="pd-meta"><span className="pd-kart">{r.kart}</span><bdi>{L.fmt(r.best)}</bdi></div>
+                </div>
+                <div className="pd-block"><span>{r.pos}</span></div>
+            </div> : <div key={i} className="pd-col empty" />)}
+        </div>
+        <div className="pd-hint">לחיצה לתוצאות המלאות</div>
     </div>;
 }
 
