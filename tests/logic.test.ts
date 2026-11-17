@@ -527,3 +527,24 @@ test('direct decoder board (dk-bridge): transponders mapped to karts in Settings
     assert.equal(R.withKarts(rx, c.settings.transponders).rows[0].kart, 5);
     assert.equal(R.sourceName('decoder'), 'דקודר AMB'); assert.equal(R.sourceName('rentix'), 'RentiX');
 });
+
+test('RentiX-style sections: finished track run -> real history result; kart info per kart', () => {
+    const lines = ['$I,"21:00:00.000","x"', '$B,12,"Heat 12"', '$F,0,"00:00:00","21:10:00","00:10:00.000","Finish"',
+        '$A,"5","5",111,"Kart","5","",1', '$A,"7","7",222,"Kart","7","",1',
+        '$G,1,"5",2,"00:00:56.000"', '$G,2,"7",2,"00:00:57.000"', '$H,1,"5",2,"00:00:27.420"', '$H,2,"7",1,"00:00:27.960"',
+        '$J,"5","00:00:28.580","00:00:28.580"', '$J,"5","00:00:27.420","00:00:56.000"', '$J,"7","00:00:27.960","00:00:27.960"', '$J,"7","00:00:29.040","00:00:57.000"'];
+    const ext = R.parseRMonitor(lines, 1);
+    assert.ok(R.extDone(ext));
+    assert.deepEqual(ext.rows[0].lapTimes, [28_580, 27_420]);
+    const id = R.extRunId(ext);
+    assert.equal(R.extRunId(R.parseRMonitor(lines, 999)), id, 'same run, same id (saved once)');
+    const res = R.extResult(ext, 5000);
+    assert.equal(res.simulated, false); assert.equal(res.heatNum, 12); assert.equal(L.resultTitle(res), 'Heat 12');
+    assert.equal(res.rows[0].kart, 5); assert.equal(res.rows[0].best, 27_420); assert.equal(res.rows[0].total, 56_000);
+    // kart info across two heats: kart 5's best is from the second heat
+    const res2: L.Result = { ...res, heatId: 'b', at: 9000, title: 'Heat 13', rows: [{ pos: 1, kart: 5, label: 'Dana', laps: [27_000, 27_500], best: 27_000, total: 54_500 }] };
+    const ks = L.kartStats([res2, res]);
+    assert.equal(ks[0].kart, 5); assert.equal(ks[0].best, 27_000); assert.equal(ks[0].bestBy, 'Dana'); assert.equal(ks[0].heats, 2); assert.equal(ks[0].laps, 4);
+    assert.equal(ks[1].kart, 7); assert.equal(ks[1].best, 27_960);
+    assert.equal(L.resultTitle({ ...res, title: undefined }), 'מקצה 12');
+});

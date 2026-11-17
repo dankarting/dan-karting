@@ -469,7 +469,8 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
 function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string }) {
     useEscape(p.onClose);
     const dense = p.rows.length > 10;
-    return <div className="wall tboard" role="dialog" aria-label="לוח זמנים">
+    const nosec = p.rows.every(r => !r.sectors);
+    return <div className={`wall tboard${nosec ? ' nosec' : ''}`} role="dialog" aria-label="לוח זמנים">
         <header className="tb-head">
             <Logo big />
             <Lights state={p.state} />
@@ -494,7 +495,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
                 <span className="tb-laps">{p.totalLaps ? `${r.laps}/${p.totalLaps}` : r.laps}{r.finished ? ' ✓' : ''}</span>
             </li>)}
         </ol>
-        <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה · <span className="pb">ירוק</span> שיא אישי · ▲▼ מקומות לעומת הזינוק</div>
+        <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה{nosec ? '' : <> · <span className="pb">ירוק</span> שיא אישי · ▲▼ מקומות לעומת הזינוק</>}</div>
         {p.footer && <div className="call-next">{p.footer}</div>}
     </div>;
 }
@@ -555,7 +556,7 @@ function liveRowsOf(core: L.Core, timing: L.DriverTiming[]): BoardRow[] {
 
 function resultRowsOf(r: L.Result): BoardRow[] {
     const bAll = Math.min(...r.rows.map(x => x.best ?? Infinity));
-    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: i === 0 ? '' : x.laps.length < r.rows[0].laps.length ? `-${r.rows[0].laps.length - x.laps.length} הקפות` : `+${L.fmt(x.total - r.rows[0].total)}`, finished: x.laps.length >= r.laps, isBest: x.best != null && x.best === bAll, sectors: null, gained: null }));
+    return r.rows.map((x, i) => ({ key: `${x.pos}`, pos: x.pos, kart: x.kart, label: x.label, laps: x.laps.length, best: x.best, last: x.laps.length ? x.laps[x.laps.length - 1] : null, gap: i === 0 ? '' : x.laps.length < r.rows[0].laps.length ? `-${r.rows[0].laps.length - x.laps.length} הקפות` : `+${L.fmt(x.total - r.rows[0].total)}`, finished: r.simulated ? x.laps.length >= r.laps : true, isBest: x.best != null && x.best === bAll, sectors: null, gained: null }));
 }
 
 const mmss = (ms: number) => { const s = Math.ceil(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
@@ -710,7 +711,7 @@ function Live({ core, update, now, hist, auto, setAuto, openScreen, save, start,
             })}
         </ol>}
 
-        {lastRes && !heat && <div className="row-actions"><span className="meta">תוצאה אחרונה: מקצה {lastRes.heatNum} · {timeOf(lastRes.at)}</span><Btn small onClick={() => openScreen('last')}>הצג על מסך</Btn></div>}
+        {lastRes && !heat && <div className="row-actions"><span className="meta">תוצאה אחרונה: {L.resultTitle(lastRes)} · {timeOf(lastRes.at)}</span><Btn small onClick={() => openScreen('last')}>הצג על מסך</Btn></div>}
     </Group>;
 }
 
@@ -731,7 +732,7 @@ function History({ hist, pub }: { hist: L.Result[]; pub?: boolean }) {
                 const q2 = q.trim();
                 return <li key={id} className="item">
                     <button type="button" className="hhead" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : id)}>
-                        <strong>מקצה {r.heatNum}</strong>
+                        <strong>{L.resultTitle(r)}</strong>
                         <span className="meta">{dayOf(r.at)} {timeOf(r.at)} · {r.rows.length} נהגים{r.minutes ? ` · ${r.minutes} דק׳` : ''}{pub ? '' : ` · ${r.simulated ? 'סימולציה' : 'אמיתי'}`}</span>
                         <span aria-hidden="true">{isOpen ? '▴' : '▾'}</span>
                     </button>
@@ -745,6 +746,40 @@ function History({ hist, pub }: { hist: L.Result[]; pub?: boolean }) {
                 </li>;
             })}
         </ul>
+    </Group>;
+}
+
+/** Kart info (as in RentiX): each kart's fastest lap in these heats, who drove it, and how much it ran. */
+function KartInfo({ hist }: { hist: L.Result[] }) {
+    const ks = L.kartStats(hist);
+    return <Group label="מידע קארטים" heading>
+        {ks.length === 0 ? <p className="empty">עוד אין הקפות בתקופה הזו.</p> : <ol className="board kinfo">
+            <li className="brow kcols" aria-hidden="true"><span className="kart">קארט</span><span className="who">שיא הקארט · נהג</span><span className="times">מקצים · הקפות</span></li>
+            {ks.map((k, i) => <li key={k.kart} className={`brow${i === 0 && k.best != null ? ' hit' : ''}`}>
+                <span className="kart">{k.kart}</span>
+                <span className="who"><b><bdi>{L.fmt(k.best)}</bdi></b><small>{k.bestBy || '–'}{k.bestAt ? ` · ${timeOf(k.bestAt)}` : ''}</small></span>
+                <span className="times"><b>{k.heats}</b><small>{k.laps} הקפות</small></span>
+            </li>)}
+        </ol>}
+    </Group>;
+}
+
+/** Preparation (as in RentiX): the heat being called and the next ones, with drivers and karts. */
+function NextHeats({ core }: { core: L.Core }) {
+    const called = L.calledHeat(core);
+    const running = L.runningHeat(core);
+    const list = [called, ...L.queueOf(core).filter(h => h.id !== called?.id)].filter((h): h is L.Heat => !!h).slice(0, 6);
+    const staff = L.kartMode(core) === 'staff';
+    return <Group label="הבא בתור" heading>
+        {running && <p className="meta">עכשיו על המסלול: מקצה {running.num}</p>}
+        {list.length === 0 ? <p className="empty">אין מקצים בתור כרגע.</p> : <ul className="list">
+            {list.map(h => <li key={h.id} className="item">
+                <div className="hhead static"><strong>מקצה {h.num}</strong><span className="meta">{h.id === called?.id ? 'נקראים למסלול' : 'ממתין'} · {L.heatCount(h)} נהגים</span></div>
+                <ol className="board">{L.driversOf(core, h).map((d, i) => <li key={d.key} className="brow">
+                    <span className="pos">{i + 1}</span><span className="kart">{staff && !d.kartSet ? '?' : d.kart}</span><span className="who">{d.label}</span>
+                </li>)}</ol>
+            </li>)}
+        </ul>}
     </Group>;
 }
 
@@ -773,6 +808,7 @@ function HistoryTab({ core, update, hist, now }: { core: L.Core; update: Update;
             </div>
         </div>
         <History hist={view === 'now' ? cur : all} />
+        <KartInfo hist={view === 'now' ? cur : all} />
         {view === 'all' && all.length > 0 && <div className="row-actions"><CopyButton text={JSON.stringify(all, null, 1)} label="העתק את כל הארכיון (JSON)" /></div>}
     </>;
 }
@@ -947,6 +983,35 @@ export function App() {
     // History edits are functions too, so two computers finishing heats never drop each other's results.
     const updHist = (fn: (h: L.Result[]) => L.Result[]) => { histRef.current = shHist.apply(fn); };
 
+    // A run finished on the track timing (RentiX / decoder) goes to history once, like our own heats:
+    // after the checkered flag, when the board has been unchanged for 45 s or the next run starts.
+    const extRef = useRef(extNow); extRef.current = extNow;
+    const pend = useRef<{ id: string; ext: R.ExtBoard; since: number } | null>(null);
+    const latch = useRef(false);
+    useEffect(() => {
+        const commit = (p: { id: string; ext: R.ExtBoard }) => {
+            pend.current = null; latch.current = true;
+            if (histRef.current.some(r => r.heatId === p.id)) return;
+            const res = R.extResult(p.ext, Date.now());
+            updHist(h => L.trimHistory(L.mergeResults([res], h), L.SHARED_HISTORY_BYTES));
+            void Cloud.archiveHeats([res]);
+        };
+        const i = setInterval(() => {
+            const e = extRef.current;
+            const p = pend.current;
+            if (e && R.extDone(e)) {
+                if (latch.current) return;
+                const id = R.extRunId(e);
+                if (!p || p.id !== id) pend.current = { id, ext: e, since: Date.now() };
+                else if (Date.now() - p.since > 45_000) commit(p);
+            } else {
+                if (p) commit(p);
+                latch.current = false;
+            }
+        }, 3000);
+        return () => clearInterval(i);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     const autoRef = useRef(auto); autoRef.current = auto;
     const start = (id: string) => update(c => L.startHeat(c, id, Date.now(), Date.now() % 100000, autoRef.current ? DEMO.speed : 5));
     const save = () => {
@@ -1016,7 +1081,7 @@ export function App() {
             {ready && tab === 'settings' && <Settings rx={rx} site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); updHist(() => []); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
             {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} ext={extNow} />}
-            {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות מקצה ${lastRes.heatNum}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
+            {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות · ${L.resultTitle(lastRes)}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
         </div>
     </FileCard>;
 }
@@ -1028,7 +1093,7 @@ export function PublicBoard() {
     const [conn, setConn] = useState('connecting');
     const [loaded, setLoaded] = useState(false);
     const [now, setNow] = useState(() => Date.now());
-    const [showHist, setShowHist] = useState(false);
+    const [tab, setTab] = useState<PubTab>('live');
     useEffect(() => {
         const take = (p: Cloud.BoardPayload) => setBoard(p);
         void Cloud.fetchBoard().then(p => { if (p) take(p); setLoaded(true); });
@@ -1040,18 +1105,28 @@ export function PublicBoard() {
     if (!loaded) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
     if (!board) return <div className="dk pub-wait"><Logo big /><p>הלוח עוד לא פעיל. כשהקופה תתחיל לשדר, המקצים והזמנים יופיעו כאן.</p><StaffShield /></div>;
     const hist = board.hist ?? [];
-    if (showHist) return <div className="dk pub-hist">
-        <div className="pub-hist-top"><Logo /><button type="button" className="kb primary" onClick={() => setShowHist(false)}>← חזרה ללוח החי</button></div>
-        <History hist={hist} pub />
+    const nav = <nav className="pub-tabs" aria-label="לשוניות">
+        {PUB_TABS.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'on' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}{id === 'results' && hist.length ? <i>{hist.length}</i> : null}</button>)}
+    </nav>;
+    if (tab !== 'live') return <div className="dk pub-hist">
+        <div className="pub-hist-top"><Logo /><span className={`pub-conn static ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</span></div>
+        {tab === 'next' && <NextHeats core={board.core} />}
+        {tab === 'results' && <History hist={hist} pub />}
+        {tab === 'karts' && <KartInfo hist={hist} />}
+        {nav}
         <StaffShield />
     </div>;
     return <div className="dk pub">
         <TrackScreen core={board.core} now={clock} onClose={() => {}} ext={board.ext && now - board.sentAt < 60_000 ? board.ext : null} />
         <StaffShield />
-        <button type="button" className="pub-hbtn" onClick={() => setShowHist(true)}>היסטוריית מקצים ({hist.length})</button>
+        {nav}
         <div className={`pub-conn ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</div>
     </div>;
 }
+
+/** Public site tabs, the same sections as on the RentiX screen: live results, preparation, race results, kart info. */
+type PubTab = 'live' | 'next' | 'results' | 'karts';
+const PUB_TABS: [PubTab, string][] = [['live', 'לוח חי'], ['next', 'הבא בתור'], ['results', 'תוצאות'], ['karts', 'קארטים']];
 
 /** Small shield in the corner of the public site: staff sign in here and go to the staff area. */
 function StaffShield() {

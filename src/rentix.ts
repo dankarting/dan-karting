@@ -13,8 +13,10 @@
 //   $J,"reg","lapTime","totalTime"                             passing (one per lap)
 //   $I,...                                                     reset (new session)
 
+import type { Result } from './logic';
+
 /** tx: transponder number when the source sends one (the direct decoder always does). */
-export type ExtRow = { pos: number; kart: number; name: string; laps: number; best: number | null; last: number | null; total: number | null; tx?: string };
+export type ExtRow = { pos: number; kart: number; name: string; laps: number; best: number | null; last: number | null; total: number | null; tx?: string; lapTimes?: number[] };
 /** Where live timing comes from: RentiX's scoreboard feed, or the AMB decoder read directly by the bridge (dk-bridge). */
 export type ExtSource = 'rentix' | 'decoder';
 /** What a board needs from the timing bridge. Published with the board so the public site shows the same. */
@@ -80,7 +82,7 @@ export function parseRMonitor(lines: string[], at: number, src: ExtSource = 'ren
         const best = hb ?? (jj && jj.laps.length ? Math.min(...jj.laps) : null);
         return {
             pos: gg?.pos ?? 0, kart, name: c?.name || `קארט ${kart}`, ...(c?.tx ? { tx: c.tx } : {}),
-            laps: gg?.laps ?? jj?.laps.length ?? 0, best, last: jj && jj.laps.length ? jj.laps[jj.laps.length - 1] : null,
+            laps: gg?.laps ?? jj?.laps.length ?? 0, best, last: jj && jj.laps.length ? jj.laps[jj.laps.length - 1] : null, lapTimes: jj?.laps ?? [],
             total: gg?.total ?? jj?.total ?? null,
         };
     });
@@ -120,6 +122,27 @@ export async function readBridge(timeoutMs = 1500): Promise<BridgeState | null> 
         const d = await r.json() as Partial<BridgeState>;
         return { connected: !!d.connected, error: String(d.error ?? ''), at: Number(d.at) || 0, lines: Array.isArray(d.lines) ? d.lines.map(String) : [], source: d.source === 'decoder' ? 'decoder' : 'rentix' };
     } catch { return null; } finally { clearTimeout(t); }
+}
+
+/** The run on the board has ended (checkered flag). */
+export const extDone = (e: ExtBoard | null | undefined) => !!e && /finish|checker/i.test(e.flag);
+
+/** Same finished run -> same id, so it is saved to history once, even after a reload. */
+export function extRunId(e: ExtBoard): string {
+    const sig = e.rows.map(r => `${r.kart}/${r.laps}/${r.best ?? ''}/${r.total ?? ''}`).join(',');
+    let h = 0;
+    for (let i = 0; i < sig.length; i++) h = (h * 31 + sig.charCodeAt(i)) | 0;
+    return `ext-${e.src}-${(h >>> 0).toString(36)}`;
+}
+
+/** A finished run from the track timing, as a real (not simulated) history result. */
+export function extResult(e: ExtBoard, now: number): Result {
+    const m = /(\d+)/.exec(e.run);
+    return {
+        heatId: extRunId(e), heatNum: m ? Number(m[1]) : 0, title: e.run || undefined, at: now, simulated: false,
+        laps: Math.max(0, ...e.rows.map(r => r.laps)),
+        rows: e.rows.map(r => ({ pos: r.pos, kart: r.kart, label: r.name, laps: r.lapTimes ?? [], best: r.best, total: r.total ?? (r.lapTimes ?? []).reduce((a, b) => a + b, 0) })),
+    };
 }
 
 /** A RentiX board is shown only while it has drivers (after a reset it falls back to our own screens). */
