@@ -615,3 +615,13 @@ body { background: #0b0b0c; }
 @keyframes ll-head { 50% { box-shadow: 0 3px 0 var(--dk-yellow), inset 0 0 0 9999px rgba(255,255,255,.12); } }
 @media (max-width: 599px) { .ll-call { flex-direction: column; gap: 24px; } .ll-flag { width: 38vw; margin-inline: 0; } }
 @media (prefers-reduced-motion: reduce) { .ll-flag, .ll-text, .ll-wave, .ll-cloth, .ll-cloth i, .wall.lastlap .tb-head { animation: none; } .ll-call { animation: ll-bg 6s linear forwards; } }
+
+/* last lap v3: a giant checkered flag fills the screen and waves like a TV broadcast, then sweeps away */
+.ll-call:has(.ll-giant) { background: #000; overflow: hidden; }
+.ll-giant { position: absolute; inset: -12% -6%; display: flex; perspective: 900px; animation: ll-giant-sweep 6s cubic-bezier(.3,.7,.3,1) forwards; }
+.ll-giant i { flex: 1; height: 100%; background: conic-gradient(#0d0d0d 25%, #f6f6f6 0 50%, #0d0d0d 0 75%, #f6f6f6 0) 0 0 / 200% 12.5%; background-position: calc(var(--i) * 100%) 0; animation: ll-giant-wave 1.3s ease-in-out infinite; animation-delay: calc(var(--i) * -.075s); }
+.ll-call:has(.ll-giant) .ll-text { position: relative; z-index: 2; padding: .35em .9em .5em; background: linear-gradient(90deg, transparent, rgba(0,0,0,.82) 12% 88%, transparent); }
+.ll-call:has(.ll-giant) .ll-text b { text-shadow: 0 0 24px rgba(0,0,0,.9), 0 6px 0 var(--dk-red); }
+@keyframes ll-giant-wave { 0%, 100% { transform: translateY(-3.5%) rotateY(10deg); filter: brightness(1.05); } 50% { transform: translateY(3.5%) rotateY(-10deg); filter: brightness(.62); } }
+@keyframes ll-giant-sweep { 0% { transform: translateX(110%) rotate(-8deg); } 14% { transform: translateX(0) rotate(-3deg); } 80% { transform: translateX(0) rotate(2deg); } 100% { transform: translateX(-115%) rotate(6deg); } }
+@media (prefers-reduced-motion: reduce) { .ll-giant, .ll-giant i { animation: none; } }
