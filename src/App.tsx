@@ -465,7 +465,7 @@ function Lights({ state }: { state: 'live' | 'done' | 'wait' }) {
     return <span className={`tb-lights ${state}`} aria-label={state === 'live' ? 'מקצה פעיל' : 'ממתין'}>{[0, 1, 2, 3].map(i => <i key={i} />)}</span>;
 }
 
-function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string; controls?: React.ReactNode }) {
+function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?: string; countdown?: string; state: 'live' | 'done' | 'wait'; rows: BoardRow[]; footer?: React.ReactNode; onClose: () => void; real?: boolean; srcName?: string; controls?: React.ReactNode; lastLap?: boolean }) {
     useEscape(p.onClose);
     const dense = p.rows.length > 10;
     const listRef = useRef<HTMLOListElement>(null);
@@ -473,6 +473,14 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
     const nosec = !!p.real; // real track timing: no gap column (as on the RentiX screen)
     // podium at the end of a heat: shown for a few seconds over the results, tap to close
     const [podium, setPodium] = useState(false);
+    // last-lap call: white flag sweeps in for a few seconds when the heat enters its final 30 s
+    const [lastCall, setLastCall] = useState(false);
+    useEffect(() => {
+        if (!p.lastLap) { setLastCall(false); return; }
+        setLastCall(true);
+        const t = setTimeout(() => setLastCall(false), 6_000);
+        return () => clearTimeout(t);
+    }, [p.lastLap]);
     const podKey = p.state === 'done' && p.rows.length > 0 ? p.title : '';
     useEffect(() => {
         if (!podKey) { setPodium(false); return; }
@@ -480,7 +488,7 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
         const t = setTimeout(() => setPodium(false), 14_000);
         return () => clearTimeout(t);
     }, [podKey]);
-    return <div className={`wall tboard${nosec ? ' nosec' : ''}`} role="dialog" aria-label="לוח זמנים">
+    return <div className={`wall tboard${nosec ? ' nosec' : ''}${p.lastLap ? ' lastlap' : ''}`} role="dialog" aria-label="לוח זמנים">
         <header className="tb-head">
             <Logo big />
             <Lights state={p.state} />
@@ -507,6 +515,10 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
         </ol>
         <div className="tb-legend"><span className="ob">סגול</span> הכי מהיר במקצה{nosec ? '' : ' · ▲▼ מקומות לעומת הזינוק'}</div>
         {p.footer && <div className="call-next">{p.footer}</div>}
+        {lastCall && <div className="ll-call" role="status" aria-live="assertive" onClick={() => setLastCall(false)}>
+            <div className="ll-flag" aria-hidden="true"><i /></div>
+            <div className="ll-text"><b>הקפה אחרונה</b><span>LAST LAP</span></div>
+        </div>}
         {podium && <Podium title={p.title} rows={p.rows} onClose={() => setPodium(false)} />}
     </div>;
 }
@@ -664,9 +676,10 @@ export function TrackScreen({ core, now, onClose, ext, ctl }: { core: L.Core; no
         const el = L.elapsedOf(core.live, now);
         const left = L.timeLeft(core.live, now);
         const timed = left != null;
-        const sub = done ? 'הסתיים · תוצאות' : L.isPaused(core) ? 'המקצה עצור · דגל אדום' : timed && left === 0 ? 'הזמן נגמר · הקפה אחרונה' : 'על המסלול · בלייב';
+        const lastLap = !done && L.isLastLap(core.live, now);
+        const sub = done ? 'הסתיים · תוצאות' : L.isPaused(core) ? 'המקצה עצור · דגל אדום' : timed && left === 0 ? 'הזמן נגמר · הקפה אחרונה' : lastLap ? 'הקפה אחרונה' : 'על המסלול · בלייב';
         return <WallDisplay title={`מקצה ${sc.heat.num}`} sub={timed ? `${sub} · ${Math.round(core.live!.durationMs! / 60_000)} דק׳` : sub} totalLaps={timed ? 0 : core.settings.laps} state={done ? 'done' : 'live'}
-            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose} controls={controls}
+            clock={L.fmt(Math.min(L.raceClock(timing, el), 3_600_000))} countdown={mmss(timed ? left : L.estRemaining(timing, el, core.settings.laps))} rows={liveRowsOf(core, timing)} onClose={onClose} controls={controls} lastLap={lastLap}
             footer={called ? <><b>נקראים למסלול:</b> מקצה {called.num} ({L.heatCount(called)} נהגים)</> : undefined} />;
     }
     return <CallDisplay core={core} state={sc.state === 'race' ? 'empty' : sc.state} heat={sc.heat} onClose={onClose} controls={controls} />;
@@ -681,7 +694,7 @@ function HeatMinutes({ core, update }: { core: L.Core; update: Update }) {
             {L.HEAT_MINUTE_OPTIONS.map(n => <button key={n} type="button" role="radio" aria-checked={m === n} className={`chip${m === n ? ' sel' : ''}`} onClick={() => set(n)}>{n} דק׳</button>)}
         </div>
         <Stepper label="או ערך אחר" value={m} min={L.MIN_HEAT_MINUTES} max={L.MAX_HEAT_MINUTES} onChange={set} />
-        <p className="meta">המינימום 10 דקות. הזמן נקבע ברגע הלחיצה על "התחל מקצה". כשהזמן נגמר, כל נהג מסיים את ההקפה שהוא נמצא בה ואז מוצגות התוצאות.</p>
+        <p className="meta">המינימום 10 דקות. הזמן נקבע ברגע הלחיצה על "התחל מקצה". 30 שניות לפני הסוף עולה על המסך "הקפה אחרונה". המקצה לא נגמר לבד: הצוות לוחץ "סיום ושמירה" כשכל הקארטים נכנסו.</p>
     </div>;
 }
 
@@ -723,7 +736,9 @@ function RaceControl(p: RaceCtl & { core: L.Core; now: number; compact?: boolean
                 ? <button type="button" className="rc-btn rc-go" onClick={() => p.update(c => L.resumeRun(c, Date.now()))}><i aria-hidden="true">▶</i><span>המשך</span></button>
                 : <button type="button" className="rc-btn rc-stop" disabled={!heat || done} onClick={() => p.update(c => L.pauseRun(c, Date.now()))}><i aria-hidden="true">❚❚</i><span>עצירה</span></button>}
             {!(p.compact && !heat) && <>
-            <button type="button" className="rc-btn rc-save" disabled={!heat || !canSave} onClick={p.save}><i aria-hidden="true">✓</i><span>{done ? 'שמירה' : 'סיום ושמירה'}</span></button>
+            {done
+                ? <button type="button" className="rc-btn rc-save" onClick={p.save}><i aria-hidden="true">✓</i><span>שמירה</span></button>
+                : <button type="button" className="rc-btn rc-end" disabled={!heat || !canSave} onClick={() => p.update(c => L.endRun(c, Date.now()))}><i className="rc-chk" aria-hidden="true" /><span>סיום</span></button>}
             <button type="button" className="rc-btn rc-reset" disabled={!heat} onClick={() => setAsk('reset')}><i aria-hidden="true">↺</i><span>איפוס</span></button>
             <button type="button" className="rc-btn rc-cancel" disabled={!heat} onClick={() => setAsk('cancel')}><i aria-hidden="true">✕</i><span>ביטול</span></button>
             </>}
@@ -1147,7 +1162,8 @@ export function App() {
         if (phase.current.key !== key) phase.current = { key, since: t };
         const age = t - phase.current.since;
         if (running) {
-            if (!done) return;
+            // demo only: the autopilot waves the checkered flag 20 s after time is up (real heats are ended by staff)
+            if (!done) { if (c.live?.durationMs && L.elapsedOf(c.live, t) - c.live.durationMs >= 20_000 && !L.isPaused(c)) update(x => L.endRun(x, Date.now())); return; }
             if (!called && next && age >= DEMO.callAfterMs) update(x => L.callHeat(x, next.id));
             if (age >= DEMO.resultsHoldMs) save();
         } else if (called) {

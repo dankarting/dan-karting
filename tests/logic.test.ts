@@ -150,7 +150,7 @@ test('queue -> call -> start -> live -> finish -> next heat on screen', () => {
     assert.equal(mid.length, 3);
     assert.ok(!L.allFinished(mid));
     const end = 1_000 + 10 ** 6;
-    assert.ok(L.allFinished(L.liveTiming(q, end)));
+    assert.ok(!L.allFinished(L.liveTiming(q, end)), 'a timed heat never ends by itself: staff stop it');
     const { core: after, result } = L.finishRun(q, end);
     assert.ok(result && result.rows.length === 3 && result.simulated && result.heatNum === h1.num);
     assert.equal(after.live, null);
@@ -267,11 +267,10 @@ test('old saved data without live/called fields still works', () => {
     assert.equal(L.screenState(s).state, 'race');
 });
 
-test('race clock freezes at the last finisher', () => {
+test('race clock keeps running until staff stop a timed heat', () => {
     let q = L.startHeat(twoQueued(), 'h1', 0, 9, 1);
     const late = L.liveTiming(q, 10 ** 7);
-    const last = Math.max(...late.map(r => r.total));
-    assert.equal(L.raceClock(late, 10 ** 7), last);
+    assert.equal(L.raceClock(late, 10 ** 7), 10 ** 7);
     const early = L.liveTiming(q, 1000);
     assert.equal(L.raceClock(early, 1000), 1000);
 });
@@ -365,12 +364,11 @@ test('timed heat: default 10 min, 20 possible, min 10; ends after the lap in pro
     const atEnd = L.liveTiming(q, 20 * 60_000 - 1);
     assert.ok(!L.allFinished(atEnd), 'not finished before the clock runs out');
     assert.equal(L.timeLeft(q.live, 21 * 60_000), 0);
-    const after = L.liveTiming(q, 22 * 60_000); // > 20 min + one lap (laps are under 50 s)
-    assert.ok(L.allFinished(after), 'everyone finishes the lap in progress');
-    for (const r of after) {
-        assert.ok(r.total >= 20 * 60_000, 'last lap crosses after the clock ran out');
-        assert.ok(r.total - r.laps[r.laps.length - 1] < 20 * 60_000, 'no extra lap after that');
-    }
+    assert.ok(!L.isLastLap(q.live, 19 * 60_000 + 29_000), 'no last-lap call before 30 s to go');
+    assert.ok(L.isLastLap(q.live, 19 * 60_000 + 30_000), 'last-lap call at 19:30 of 20 minutes');
+    const after = L.liveTiming(q, 22 * 60_000);
+    assert.ok(!L.allFinished(after), 'time up does not stop the heat: staff stop it');
+    assert.ok(after.some(r => r.total > 20 * 60_000 + 60_000), 'karts keep lapping after the clock ran out');
     assert.ok(after[0].laps.length > 8, 'a 20 minute heat is not capped at the old lap count');
     const { result } = L.finishRun(q, 22 * 60_000);
     assert.equal(result?.minutes, 20);
@@ -455,6 +453,19 @@ test('heat controls: pause freezes the clock, resume continues, restart goes bac
     const r = L.restartRun(L.pauseRun(c, 520_000), 600_000);
     assert.equal(L.elapsedOf(r.live, 600_000), 0); assert.ok(!L.isPaused(r));
     assert.equal(L.elapsedOf(r.live, 605_000), 5_000);
+});
+
+test('checkered flag: staff end the heat, clock stops, everyone finished; reset clears it', () => {
+    let q = L.startHeat(twoQueued(), 'h1', 0, 9, 1);
+    assert.ok(!L.allFinished(L.liveTiming(q, 700_000)), 'time up alone does not end it');
+    q = L.endRun(q, 700_000);
+    assert.ok(L.isEnded(q) && !L.isPaused(q));
+    assert.equal(L.elapsedOf(q.live, 900_000), 700_000, 'clock stopped at the flag');
+    assert.ok(L.allFinished(L.liveTiming(q, 900_000)));
+    assert.equal(L.pauseRun(q, 800_000), q, 'no pause after the flag');
+    const p = L.endRun(L.pauseRun(L.restartRun(q, 1_000_000), 1_060_000), 1_200_000);
+    assert.equal(L.elapsedOf(p.live, 1_300_000), 60_000, 'flag while paused ends at the pause');
+    assert.ok(!L.isEnded(L.restartRun(p, 2_000_000)));
 });
 
 console.log(`\n${passed} passed, ${failed.length} failed`);

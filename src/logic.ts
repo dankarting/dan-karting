@@ -61,7 +61,7 @@ export type Settings = {
 
 /** The heat currently on track (simulated). Stored in Core so it survives tab changes and reloads. */
 /** durationMs set = timed heat (fixed when the heat starts). Unset = legacy lap-limited run. */
-export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number; pausedAt?: number };
+export type LiveRun = { heatId: string; t0: number; seed: number; speed: number; durationMs?: number; pausedAt?: number; endedAt?: number };
 
 export const MIN_HEAT_MINUTES = 10;
 export const MAX_HEAT_MINUTES = 30;
@@ -406,11 +406,11 @@ export function startHeat(core: Core, heatId: string, now: number, seed: number,
 }
 
 /** Simulated ms on track. Speed multiplies wall time (demo only). */
-export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, ((live.pausedAt ?? now) - live.t0) * live.speed) : 0);
+export const elapsedOf = (live: LiveRun | null | undefined, now: number) => (live ? Math.max(0, ((live.endedAt ?? live.pausedAt ?? now) - live.t0) * live.speed) : 0);
 
 /** Pause the heat clock (red flag): timing and countdown freeze until resumed. */
 export function pauseRun(core: Core, now: number): Core {
-    if (!core.live || core.live.pausedAt != null) return core;
+    if (!core.live || core.live.pausedAt != null || core.live.endedAt != null) return core;
     return { ...core, live: { ...core.live, pausedAt: now } };
 }
 
@@ -424,11 +424,18 @@ export function resumeRun(core: Core, now: number): Core {
 /** Restart the heat on track from zero (same drivers, clock and laps reset). */
 export function restartRun(core: Core, now: number): Core {
     if (!core.live) return core;
-    const { pausedAt: _p, ...live } = core.live;
+    const { pausedAt: _p, endedAt: _e, ...live } = core.live;
     return { ...core, live: { ...live, t0: now } };
 }
 
-export const isPaused = (core: Core) => core.live?.pausedAt != null;
+export const isPaused = (core: Core) => core.live?.pausedAt != null && core.live?.endedAt == null;
+
+/** Checkered flag: staff end the heat. The clock stops, results and podium show; "save" then archives it. */
+export function endRun(core: Core, now: number): Core {
+    if (!core.live || core.live.endedAt != null) return core;
+    return { ...core, live: { ...core.live, endedAt: core.live.pausedAt ?? now } };
+}
+export const isEnded = (core: Core) => core.live?.endedAt != null;
 
 /** Change simulation speed without jumping the clock. */
 export function setSpeed(core: Core, speed: number, now: number): Core {
@@ -442,7 +449,8 @@ export function liveTiming(core: Core, now: number, feed?: TimingFeed): DriverTi
     const h = runningHeat(core);
     if (!h || !core.live) return [];
     const drivers = driversOf(core, h), el = elapsedOf(core.live, now);
-    if (core.live.durationMs) return timedTiming((feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, TIMED_LAP_CAP), core.live.durationMs);
+    // timed heat: never ends by itself (owner 2026-11-17). Karts keep lapping until staff press stop/save.
+    if (core.live.durationMs) return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, TIMED_LAP_CAP).map(r => ({ ...r, finished: core.live!.endedAt != null }));
     return (feed ?? makeSimulatedFeed(core.live.seed, transponderOf(core))).snapshot(drivers, el, core.settings.laps);
 }
 
@@ -459,6 +467,15 @@ export function timedTiming(rows: DriverTiming[], durationMs: number): DriverTim
         const done = t >= durationMs;
         return { ...r, laps, total: laps.length ? t : 0, best: laps.length ? Math.min(...laps) : null, last: laps.length ? laps[laps.length - 1] : null, finished: done };
     });
+}
+
+/** Seconds before the end of a timed heat when the last-lap call goes up (9:30 in a 10-minute heat). */
+export const LAST_LAP_MS = 30_000;
+
+/** Last-lap phase of a timed heat: from 30 s before the end until staff stop it. */
+export function isLastLap(live: LiveRun | null | undefined, now: number): boolean {
+    const left = timeLeft(live, now);
+    return left != null && left <= LAST_LAP_MS;
 }
 
 /** Time left on a timed heat (0 when over). Null for a legacy lap-limited run. */
