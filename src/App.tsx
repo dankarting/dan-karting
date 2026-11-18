@@ -423,9 +423,14 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
     // podium at the end of a heat: shown for a few seconds over the results, tap to close
     const [podium, setPodium] = useState(false);
     // last-lap call: giant checkered flag waves across the screen for 3.5 s when the heat enters its final 30 s
+    // Only when the heat ENTERS its last lap while the board is open: opening the board in the middle of (or long after)
+    // the last lap must not throw the flag over the screen every time.
     const [lastCall, setLastCall] = useState(false);
+    const llSeen = useRef(!!p.lastLap);
     useEffect(() => {
-        if (!p.lastLap) { setLastCall(false); return; }
+        if (!p.lastLap) { llSeen.current = false; setLastCall(false); return; }
+        if (llSeen.current) return;
+        llSeen.current = true;
         setLastCall(true);
         const t = setTimeout(() => setLastCall(false), 3_500);
         return () => clearTimeout(t);
