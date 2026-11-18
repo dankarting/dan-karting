@@ -201,7 +201,7 @@ function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L
     const mixed = fast > 0 && fast < tix.length;
     return <li className="item pending">
         <div className="itop"><strong>{sb.groupName}</strong><span className="big">{sb.names.length}</span></div>
-        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}{sb.checkinId ? <> · 📱 נרשמו בטלפון{sb.email ? <> · <span dir="ltr">{sb.email}</span></> : null}</> : null}</div>
+        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}{sb.phone ? <> · 📱 נרשמו בטלפון <span dir="ltr">…{sb.phone.slice(-4)}</span></> : null}</div>
         <ul className="plain dlist">
             {sb.names.map((n, i) => <li key={i} className="trow"><span className="tname">{n}</span>
                 <TicketChips core={core} value={tix[i]} onChange={t => setTix(tix.map((x, j) => (j === i ? t : x)))} label={`כרטיס ל${n}`} minutes={minutes} /></li>)}
@@ -257,7 +257,7 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
     return <>
         <Group label={`ממתינים לתשלום (${pending.length})`} heading>
             <p className="meta">הרשמות שהלקוחות שלחו מהטופס. בוחרים סוג כרטיס ומסמנים "שולם": הקבוצה נכנסת לתור והמקצים מסתדרים לבד (טיוטה, הקופאית מאשרת). אישור התשלום כאן מדומה: אין חיוב ואין סליקה.</p>
-            {pending.length === 0 && <p className="empty">אין הרשמות שממתינות. לקוחות נרשמים מהטלפון שלהם עם גוגל (QR בדלפק), והשמות קופצים כאן לבד.</p>}
+            {pending.length === 0 && <p className="empty">אין הרשמות שממתינות. לקוחות נרשמים מהטלפון שלהם (QR בדלפק), והשמות קופצים כאן לבד.</p>}
             <ul className="list">
                 {pending.map(sb => <PendingItem key={sb.id} core={core} update={update} sb={sb} />)}
             </ul>
@@ -1014,12 +1014,12 @@ function TimingSettings({ core, update, rx }: { core: L.Core; update: Update; rx
 /** Counter sign for phone check-in: QR, link, print. */
 function JoinSign({ ok }: { ok: boolean | null }) {
     return <Group label="הרשמה בטלפון (QR בדלפק)" heading>
-        <p className="meta">הלקוח סורק, מתחבר עם גוגל ומסמן מי מגיע. מי שכבר היה מוצא את השמות שלו מוכנים. ההרשמה קופצת בקופה תחת "ממתינים לתשלום".</p>
+        <p className="meta">הלקוח סורק, מקליד טלפון, ומי שכבר היה מזוהה לבד. ההרשמה קופצת בקופה תחת "ממתינים לתשלום".</p>
         <div className="join-sign"><JoinQr size={180} /><div>
             <p className="meta" dir="ltr">{joinUrl()}</p>
             <div className="actions"><Btn kind="primary" small onClick={printJoinSign}>הדפס שלט</Btn><Btn small onClick={() => window.open(joinUrl(), '_blank')}>פתח את הדף</Btn></div>
         </div></div>
-        {ok === false && <div className="warn" role="alert">הרשמה בטלפון עוד לא מופעלת בענן. צריך להריץ פעם אחת את docs/checkin.sql ב-Supabase (SQL Editor) ולהפעיל כניסה עם גוגל.</div>}
+        {ok === false && <div className="warn" role="alert">הרשמה בטלפון עוד לא מופעלת בענן. צריך להריץ פעם אחת את docs/checkin.sql ב-Supabase (SQL Editor).</div>}
         {ok === true && <p className="meta">✓ מחובר: הרשמות מהטלפון נכנסות לקופה.</p>}
     </Group>;
 }
@@ -1343,19 +1343,7 @@ function StaffLoginForm({ onDone }: { onDone?: () => void }) {
 export function StaffGate({ children }: { children: React.ReactNode }) {
     const [session, setSession] = useState<Session | null | undefined>(undefined);
     useEffect(() => Cloud.onSession(setSession), []);
-    // Signed in is not enough: the account must be on the staff list (customers sign in with Google on the check-in page).
-    // null = could not check (offline, or docs/checkin.sql not run yet): let the staff in as before.
-    const [staff, setStaff] = useState<boolean | null | undefined>(undefined);
-    const uid = session?.user.id;
-    useEffect(() => { if (!uid) { setStaff(undefined); return; } let live = true; void Cloud.amStaff().then(v => { if (live) setStaff(v); }); return () => { live = false; }; }, [uid]);
-    if (session === undefined || (session && staff === undefined)) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
-    if (session && staff === false) return <div className="dk pub-wait">
-        <Logo big />
-        <h1 className="gate-title">החשבון הזה אינו חשבון צוות</h1>
-        <p>אזור הצוות פתוח רק לעובדים.</p>
-        <button type="button" className="kb primary" onClick={() => void Cloud.signOut()}>התנתקות</button>
-        <a className="pub-staff" href="./">למסך הצופים</a>
-    </div>;
+    if (session === undefined) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
     if (session) return <>{children}</>;
     return <div className="dk pub-wait">
         <Logo big />

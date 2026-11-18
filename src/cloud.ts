@@ -116,53 +116,28 @@ export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void
     return () => { void supabase.removeChannel(ch); };
 }
 
-// ---------------------------------------------------------------- customer check-in with Google (?join, docs/checkin.sql)
-// Customers sign in with Google on a SEPARATE client (own storage key), so a customer sign-in on a staff computer never
-// replaces the staff session. The page reads only the signed-in customer's own saved names.
-export const customer = createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: true, storageKey: 'dankart.customer.session', detectSessionInUrl: true, flowType: 'pkce' },
-});
-export type CheckinRow = { id: number; at: string; phone?: string; names: string[]; minutes: number; email?: string | null };
-export type Customer = { name: string; email: string; avatar?: string };
+// ---------------------------------------------------------------- phone check-in (?join, docs/checkin.sql)
+// The public page never reads customer data directly: it calls two database functions that return only short names.
+export const phoneDigits = (p: string) => p.replace(/\D/g, '');
+export const validPhone = (p: string) => /^0\d{8,9}$/.test(phoneDigits(p));
+export type CheckinRow = { id: number; at: string; phone: string; names: string[]; minutes: number };
 
-export function customerOf(s: Session | null): Customer | null {
-    if (!s) return null;
-    const m = (s.user.user_metadata ?? {}) as Record<string, string | undefined>;
-    return { name: (m.full_name || m.name || '').trim(), email: s.user.email ?? '', avatar: m.avatar_url || m.picture };
-}
-export function onCustomer(cb: (s: Session | null) => void): () => void {
-    void customer.auth.getSession().then(({ data }) => cb(data.session));
-    const { data } = customer.auth.onAuthStateChange((_e, s) => cb(s));
-    return () => data.subscription.unsubscribe();
-}
-/** Opens Google, then comes back to the check-in page signed in. Returns an error message or null. */
-export async function customerGoogle(back: string): Promise<string | null> {
-    const { error } = await customer.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: back, queryParams: { prompt: 'select_account' } } });
-    return error ? error.message : null;
-}
-export async function customerSignOut() { await customer.auth.signOut(); }
-/** The signed-in customer's saved names ([] = first visit), or null if the cloud could not be reached. */
-export async function checkinMe(): Promise<string[] | null> {
-    const { data, error } = await customer.rpc('checkin_me');
+/** Saved short names for this phone ([] = new customer), or null if the cloud could not be reached. */
+export async function checkinLookup(phone: string): Promise<string[] | null> {
+    const { data, error } = await supabase.rpc('checkin_lookup', { p_phone: phoneDigits(phone) });
     if (error) return null;
     return Array.isArray(data) ? (data as string[]) : [];
 }
 /** pick = 1-based positions of saved names that are coming; fresh = names typed now. Returns an error (Hebrew) or null. */
-export async function checkinSubmit(pick: number[], fresh: string[], minutes: number): Promise<string | null> {
-    const { error } = await customer.rpc('checkin_submit', { p_pick: pick, p_new: fresh, p_minutes: minutes });
+export async function checkinSubmit(phone: string, pick: number[], fresh: string[], minutes: number): Promise<string | null> {
+    const { error } = await supabase.rpc('checkin_submit', { p_phone: phoneDigits(phone), p_pick: pick, p_new: fresh, p_minutes: minutes });
     if (!error) return null;
     const m = error.message || '';
     if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
-    if (m.includes('not signed in')) return 'צריך להתחבר שוב עם גוגל.';
+    if (m.includes('bad phone')) return 'מספר הטלפון לא תקין';
     if (m.includes('no names')) return 'צריך לפחות שם אחד';
     if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
     return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
-}
-/** Is the signed-in staff session really staff? null = could not check (offline or the SQL was not run yet). */
-export async function amStaff(): Promise<boolean | null> {
-    const { data, error } = await supabase.rpc('is_staff');
-    if (error) return null;
-    return data === true;
 }
 /** Staff: takes all open check-ins once (null = table not set up yet or offline). */
 export async function checkinClaim(): Promise<CheckinRow[] | null> {

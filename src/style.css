@@ -638,11 +638,3 @@ body { background: #0b0b0c; }
 .join .err { color: #ff7a7d; margin: 0; }
 .join-sign { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .join-qr { border-radius: 6px; flex: none; }
-.join-google { display: flex; align-items: center; justify-content: center; gap: 12px; background: #fff; color: #1f1f1f; border-color: #fff; font-weight: 700; }
-.join-google:hover:not(:disabled) { background: #f1f1f1; }
-.join-small { margin: 0; color: #8f8a83; font-size: 14px; text-align: center; }
-.join-me { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8f8a83; min-width: 0; }
-.join-me img { width: 26px; height: 26px; border-radius: 50%; }
-.join-me span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.join-link { margin-inline-start: auto; background: none; border: 0; color: var(--dk-yellow, #ffd400); font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; padding: 6px 0; }
-.join-done .join-link { margin: 0; }
