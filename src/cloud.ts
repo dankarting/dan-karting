@@ -115,3 +115,40 @@ export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void
         .subscribe(s => onStatus?.(s));
     return () => { void supabase.removeChannel(ch); };
 }
+
+// ---------------------------------------------------------------- phone check-in (?join, docs/checkin.sql)
+// The public page never reads customer data directly: it calls two database functions that return only short names.
+export const phoneDigits = (p: string) => p.replace(/\D/g, '');
+export const validPhone = (p: string) => /^0\d{8,9}$/.test(phoneDigits(p));
+export type CheckinRow = { id: number; at: string; phone: string; names: string[]; minutes: number };
+
+/** Saved short names for this phone ([] = new customer), or null if the cloud could not be reached. */
+export async function checkinLookup(phone: string): Promise<string[] | null> {
+    const { data, error } = await supabase.rpc('checkin_lookup', { p_phone: phoneDigits(phone) });
+    if (error) return null;
+    return Array.isArray(data) ? (data as string[]) : [];
+}
+/** pick = 1-based positions of saved names that are coming; fresh = names typed now. Returns an error (Hebrew) or null. */
+export async function checkinSubmit(phone: string, pick: number[], fresh: string[], minutes: number): Promise<string | null> {
+    const { error } = await supabase.rpc('checkin_submit', { p_phone: phoneDigits(phone), p_pick: pick, p_new: fresh, p_minutes: minutes });
+    if (!error) return null;
+    const m = error.message || '';
+    if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
+    if (m.includes('bad phone')) return 'מספר הטלפון לא תקין';
+    if (m.includes('no names')) return 'צריך לפחות שם אחד';
+    if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
+    return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
+}
+/** Staff: takes all open check-ins once (null = table not set up yet or offline). */
+export async function checkinClaim(): Promise<CheckinRow[] | null> {
+    const { data, error } = await supabase.rpc('checkin_claim');
+    if (error) return null;
+    return (data ?? []) as CheckinRow[];
+}
+/** Calls back when a new check-in arrives (staff only). */
+export function subscribeCheckins(cb: () => void): () => void {
+    const ch = supabase.channel('checkins_new')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'checkins' }, () => cb())
+        .subscribe();
+    return () => { void supabase.removeChannel(ch); };
+}

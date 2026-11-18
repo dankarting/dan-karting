@@ -574,6 +574,20 @@ test('direct decoder board (dk-bridge): transponders mapped to karts in Settings
     assert.equal(R.sourceName('decoder'), 'דקודר AMB'); assert.equal(R.sourceName('rentix'), 'RentiX');
 });
 
+test('phone check-in -> pending at the cashier, once per check-in id, then paid -> queue', () => {
+    let c = L.initialCore();
+    const rows = [{ id: 7, at: new Date(1000).toISOString(), phone: '0521234567', names: ['דני כהן', 'רון'], minutes: 20 }];
+    c = L.addCheckins(c, rows);
+    c = L.addCheckins(c, rows); // the same check-in again (two computers / retry): not added twice
+    const p = L.pendingOf(c);
+    assert.equal(p.length, 1);
+    assert.equal(p[0].groupName, 'דני כהן +1'); assert.deepEqual(p[0].names, ['דני כהן', 'רון']);
+    assert.equal(p[0].phone, '0521234567'); assert.equal(p[0].minutes, 20); assert.equal(p[0].checkinId, 7);
+    c = L.markPaidAndPlan(c, p[0].id, 2000);
+    assert.equal(L.pendingOf(c).length, 0); assert.equal(c.groups.length, 1); assert.deepEqual(c.groups[0].names, ['דני כהן', 'רון']);
+    assert.equal(c.groups[0].minutes, 20);
+});
+
 test('RentiX-style sections: finished track run -> real history result; kart info per kart', () => {
     const lines = ['$I,"21:00:00.000","x"', '$B,12,"Heat 12"', '$F,0,"00:00:00","21:10:00","00:10:00.000","Finish"',
         '$A,"5","5",111,"Kart","5","",1', '$A,"7","7",222,"Kart","7","",1',

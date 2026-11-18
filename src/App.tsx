@@ -4,6 +4,7 @@ import * as L from './logic';
 import * as Cloud from './cloud';
 import * as R from './rentix';
 import { useShared, type SyncStatus } from './shared';
+import { JoinQr, joinUrl, printJoinSign } from './Join';
 
 /** Data saved by the older per-device version, used once as the starting point. */
 function legacy<T>(k: string): T | null { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) as T : null; } catch { return null; } }
@@ -200,7 +201,7 @@ function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L
     const mixed = fast > 0 && fast < tix.length;
     return <li className="item pending">
         <div className="itop"><strong>{sb.groupName}</strong><span className="big">{sb.names.length}</span></div>
-        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}</div>
+        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}{sb.phone ? <> · 📱 נרשמו בטלפון <span dir="ltr">…{sb.phone.slice(-4)}</span></> : null}</div>
         <ul className="plain dlist">
             {sb.names.map((n, i) => <li key={i} className="trow"><span className="tname">{n}</span>
                 <TicketChips core={core} value={tix[i]} onChange={t => setTix(tix.map((x, j) => (j === i ? t : x)))} label={`כרטיס ל${n}`} minutes={minutes} /></li>)}
@@ -256,7 +257,7 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
     return <>
         <Group label={`ממתינים לתשלום (${pending.length})`} heading>
             <p className="meta">הרשמות שהלקוחות שלחו מהטופס. בוחרים סוג כרטיס ומסמנים "שולם": הקבוצה נכנסת לתור והמקצים מסתדרים לבד (טיוטה, הקופאית מאשרת). אישור התשלום כאן מדומה: אין חיוב ואין סליקה.</p>
-            {pending.length === 0 && <p className="empty">אין הרשמות שממתינות. לקוחות נרשמים בלשונית "הרשמה".</p>}
+            {pending.length === 0 && <p className="empty">אין הרשמות שממתינות. לקוחות נרשמים מהטלפון שלהם (QR בדלפק), והשמות קופצים כאן לבד.</p>}
             <ul className="list">
                 {pending.map(sb => <PendingItem key={sb.id} core={core} update={update} sb={sb} />)}
             </ul>
@@ -1010,7 +1011,20 @@ function TimingSettings({ core, update, rx }: { core: L.Core; update: Update; rx
     </Group>;
 }
 
-function Settings({ core, update, hist, onReset, site, rx }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site: React.ReactNode; rx?: RxState }) {
+/** Counter sign for phone check-in: QR, link, print. */
+function JoinSign({ ok }: { ok: boolean | null }) {
+    return <Group label="הרשמה בטלפון (QR בדלפק)" heading>
+        <p className="meta">הלקוח סורק, מקליד טלפון, ומי שכבר היה מזוהה לבד. ההרשמה קופצת בקופה תחת "ממתינים לתשלום".</p>
+        <div className="join-sign"><JoinQr size={180} /><div>
+            <p className="meta" dir="ltr">{joinUrl()}</p>
+            <div className="actions"><Btn kind="primary" small onClick={printJoinSign}>הדפס שלט</Btn><Btn small onClick={() => window.open(joinUrl(), '_blank')}>פתח את הדף</Btn></div>
+        </div></div>
+        {ok === false && <div className="warn" role="alert">הרשמה בטלפון עוד לא מופעלת בענן. צריך להריץ פעם אחת את docs/checkin.sql ב-Supabase (SQL Editor).</div>}
+        {ok === true && <p className="meta">✓ מחובר: הרשמות מהטלפון נכנסות לקופה.</p>}
+    </Group>;
+}
+
+function Settings({ core, update, hist, onReset, site, rx, checkinOk = null }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site: React.ReactNode; rx?: RxState; checkinOk?: boolean | null }) {
     const s = core.settings;
     const [t, setT] = useState('');
     const [confirm, setConfirm] = useState(false);
@@ -1018,6 +1032,7 @@ function Settings({ core, update, hist, onReset, site, rx }: { core: L.Core; upd
     const overDraft = core.heats.filter(h => h.status === 'draft' && L.heatCount(h) > s.capacity).length;
     const overQueued = core.heats.filter(h => h.status === 'approved' && L.heatCount(h) > s.capacity).length;
     return <>
+        <JoinSign ok={checkinOk} />
         {site}
         <TimingSettings core={core} update={update} rx={rx} />
         <Group label="הגדרות" heading>
@@ -1111,6 +1126,25 @@ export function App() {
     }, [sending, core, hist, periodKey, extNow && JSON.stringify(extNow.rows) + extNow.flag + extNow.run + Math.floor((extNow.timeToGo ?? 0) / 5000)]);
     // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
     useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Phone check-ins (?join): every signed-in staff computer takes new ones into "ממתינים לתשלום" (each one once, see checkin_claim).
+    const [checkinOk, setCheckinOk] = useState<boolean | null>(null);
+    useEffect(() => {
+        if (!session) return;
+        let busy = false;
+        const pull = async () => {
+            if (busy) return; busy = true;
+            try {
+                const rows = await Cloud.checkinClaim();
+                setCheckinOk(rows !== null);
+                if (rows && rows.length) update(c => L.addCheckins(c, rows));
+            } finally { busy = false; }
+        };
+        void pull();
+        const off = Cloud.subscribeCheckins(() => void pull());
+        const i = setInterval(() => void pull(), 5000);
+        return () => { off(); clearInterval(i); };
+    }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Latest state for timers and chained edits: every change goes through update(fn) on the newest core.
     const coreRef = useRef(core); coreRef.current = core;
@@ -1221,7 +1255,7 @@ export function App() {
             {ready && tab === 'heats' && <Heats core={core} update={update} />}
             {ready && tab === 'live' && <Live rx={rx} core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} save={save} start={start} cancel={cancel} goHeats={goHeats} quickStart={quickStart} />}
             {ready && tab === 'history' && <HistoryTab core={core} update={update} hist={hist} now={now} />}
-            {ready && tab === 'settings' && <Settings rx={rx} site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); updHist(() => []); }} />}
+            {ready && tab === 'settings' && <Settings checkinOk={checkinOk} rx={rx} site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); updHist(() => []); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
             {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} ext={extNow} ctl={{ start, save, cancel, update, quickStart }} />}
             {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות · ${L.resultTitle(lastRes)}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
