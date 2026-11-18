@@ -639,3 +639,4 @@ body { background: #0b0b0c; }
 .join-sign { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .join-qr { border-radius: 6px; flex: none; }
 .join-code { letter-spacing: .5em; font-size: 32px; }
+.join-name { min-height: 56px; font-size: 20px; }

@@ -37,7 +37,7 @@ export function JoinPage() {
         const names = await Cloud.checkinLookupId(tz);
         setBusy(false);
         if (names === null) { setErr('אין חיבור כרגע. נסו שוב או פנו לקופה.'); return; }
-        setSaved(names); setPick(names.map((_, i) => i === 0)); setFresh(names.length ? [] : ['']); setStep('who');
+        setSaved(names.slice(0, 1)); setPick(names.length ? [true] : []); setFresh(names.length ? [] : ['']); setStep('who');
     };
     const typed = fresh.map(f => f.trim()).filter(Boolean);
     const coming = [...saved.filter((_, i) => pick[i]), ...typed];
@@ -56,7 +56,7 @@ export function JoinPage() {
             <h1>הרשמה למקצה</h1>
             <p className="join-sub">הקלידו מספר תעודת זהות. לקוחות חוזרים מזוהים לבד.</p>
             <label className="field"><span className="flabel">תעודת זהות</span>
-                <input ref={idRef} className="inp join-phone" type="text" inputMode="numeric" autoComplete="off" dir="ltr" placeholder="9 ספרות" maxLength={9}
+                <input ref={idRef} className="inp join-phone" type="text" inputMode="numeric" autoComplete="off" dir="ltr" placeholder="ת״ז" maxLength={9}
                     value={tz} onChange={e => { setErr(''); setTz(e.target.value.replace(/\D/g, '').slice(0, 9)); }} />
             </label>
             {err && <p className="err" role="alert">{err}</p>}
@@ -66,29 +66,16 @@ export function JoinPage() {
 
         {step === 'who' && <div className="join-card">
             <h1>{saved.length ? `שלום ${saved[0].split(' ')[0]}! 👋` : 'ברוכים הבאים!'}</h1>
-            <p className="join-sub">{saved.length ? 'סמנו מי מגיע היום. אפשר להוסיף חברים.' : 'כתבו את השם שלכם. בפעם הבאה נזהה אתכם לפי תעודת הזהות.'}</p>
-            {saved.length > 0 && <ul className="join-list">
-                {saved.map((n, i) => <li key={i}>
-                    <button type="button" className={`join-pick${pick[i] ? ' on' : ''}`} aria-pressed={!!pick[i]} onClick={() => { setErr(''); setPick(pick.map((p, j) => (j === i ? !p : p))); }}>
-                        <span className="join-box" aria-hidden="true">{pick[i] ? '✓' : ''}</span>{n}
-                    </button>
-                </li>)}
-            </ul>}
-            {fresh.map((f, i) => <div key={i} className="join-row">
-                <input className="inp" value={f} maxLength={24} placeholder={i === 0 && !saved.length ? 'שם מלא' : 'שם של חבר/ה'} aria-label={`שם ${i + 1}`}
-                    autoFocus={i === fresh.length - 1 && (i > 0 || !saved.length)}
-                    onChange={e => { setErr(''); setFresh(fresh.map((x, j) => (j === i ? e.target.value : x))); }} />
-                {(i > 0 || saved.length > 0) && <button type="button" className="kb ghost sm" aria-label="הסר" onClick={() => setFresh(fresh.filter((_, j) => j !== i))}>✕</button>}
-            </div>)}
-            {fresh.length + saved.length < 20 && <button type="button" className="kb join-add" onClick={() => setFresh([...fresh, ''])}>+ הוסף חבר/ה</button>}
-            <div className="field"><span className="flabel">אורך המקצה</span>
-                <div className="chips" role="radiogroup" aria-label="אורך המקצה">
-                    {[10, 20].map(m => <button key={m} type="button" role="radio" aria-checked={minutes === m} className={`chip${minutes === m ? ' sel' : ''}`} onClick={() => setMinutes(m)}>{m} דקות</button>)}
-                </div>
-            </div>
+            {saved.length > 0
+                ? <p className="join-names">{saved[0]}</p>
+                : <>
+                    <p className="join-sub">כתבו את השם שלכם. בפעם הבאה נזהה אתכם לפי תעודת הזהות.</p>
+                    <input className="inp join-name" value={fresh[0] ?? ''} maxLength={24} placeholder="שם מלא" aria-label="שם מלא" autoFocus
+                        onChange={e => { setErr(''); setFresh([e.target.value]); }} />
+                </>}
             {err && <p className="err" role="alert">{err}</p>}
-            <button type="button" className="kb primary join-go" disabled={busy} onClick={() => void submit()}>{busy ? 'שולח…' : coming.length > 1 ? `שליחה (${coming.length} משתתפים)` : 'שליחה'}</button>
-            <button type="button" className="kb ghost sm" onClick={reset}>חזרה</button>
+            <button type="button" className="kb primary join-go" disabled={busy} onClick={() => void submit()}>{busy ? 'שולח…' : 'שליחה'}</button>
+            <button type="button" className="kb ghost sm" onClick={reset}>{saved.length ? 'זה לא אני' : 'חזרה'}</button>
         </div>}
 
         {step === 'done' && <div className="join-card join-done">
