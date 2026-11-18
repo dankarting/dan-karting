@@ -122,21 +122,41 @@ export const phoneDigits = (p: string) => p.replace(/\D/g, '');
 export const validPhone = (p: string) => /^0\d{8,9}$/.test(phoneDigits(p));
 export type CheckinRow = { id: number; at: string; phone: string; names: string[]; minutes: number };
 
-/** Saved short names for this phone ([] = new customer), or null if the cloud could not be reached. */
-export async function checkinLookup(phone: string): Promise<string[] | null> {
-    const { data, error } = await supabase.rpc('checkin_lookup', { p_phone: phoneDigits(phone) });
-    if (error) return null;
+/** Saved short names for this phone ([] = new customer); 'code' = an SMS code is needed first; null = cloud not reachable. */
+export async function checkinLookup(phone: string, token?: string): Promise<string[] | 'code' | null> {
+    const { data, error } = await supabase.rpc('checkin_lookup', { p_phone: phoneDigits(phone), ...(token ? { p_token: token } : {}) });
+    if (error) return (error.message || '').includes('need code') ? 'code' : null;
     return Array.isArray(data) ? (data as string[]) : [];
 }
+/** Sends an SMS code. 'sent', 'off' (SMS not set up: no code needed) or an error (Hebrew). */
+export async function checkinSendCode(phone: string): Promise<'sent' | 'off' | { error: string }> {
+    const { data, error } = await supabase.rpc('checkin_send_code', { p_phone: phoneDigits(phone) });
+    if (!error) return data === 'off' ? 'off' : 'sent';
+    const m = error.message || '';
+    if (m.includes('wait')) return { error: 'כבר שלחנו קוד. אפשר לבקש שוב בעוד דקה.' };
+    if (m.includes('bad phone')) return { error: 'צריך מספר נייד (05X)' };
+    if (m.includes('busy')) return { error: 'יש עומס כרגע. פנו לקופה.' };
+    return { error: 'לא הצלחנו לשלוח קוד. נסו שוב או פנו לקופה.' };
+}
+/** Checks the code. Returns a pass for this phone (kept for the day), or an error (Hebrew). */
+export async function checkinVerify(phone: string, code: string): Promise<{ token: string } | { error: string }> {
+    const { data, error } = await supabase.rpc('checkin_verify', { p_phone: phoneDigits(phone), p_code: code.replace(/\D/g, '') });
+    if (!error && typeof data === 'string') return { token: data };
+    const m = error?.message || '';
+    if (m.includes('wrong')) return { error: 'הקוד לא נכון. נסו שוב.' };
+    if (m.includes('expired')) return { error: 'הקוד פג תוקף. בקשו קוד חדש.' };
+    return { error: 'לא הצלחנו לבדוק את הקוד. נסו שוב.' };
+}
 /** pick = 1-based positions of saved names that are coming; fresh = names typed now. Returns an error (Hebrew) or null. */
-export async function checkinSubmit(phone: string, pick: number[], fresh: string[], minutes: number): Promise<string | null> {
-    const { error } = await supabase.rpc('checkin_submit', { p_phone: phoneDigits(phone), p_pick: pick, p_new: fresh, p_minutes: minutes });
+export async function checkinSubmit(phone: string, pick: number[], fresh: string[], minutes: number, token?: string): Promise<string | null> {
+    const { error } = await supabase.rpc('checkin_submit', { p_phone: phoneDigits(phone), p_pick: pick, p_new: fresh, p_minutes: minutes, ...(token ? { p_token: token } : {}) });
     if (!error) return null;
     const m = error.message || '';
     if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
     if (m.includes('bad phone')) return 'מספר הטלפון לא תקין';
     if (m.includes('no names')) return 'צריך לפחות שם אחד';
     if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
+    if (m.includes('need code')) return 'צריך לאמת את הטלפון עם קוד. חזרו להתחלה.';
     return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
 }
 /** Staff: takes all open check-ins once (null = table not set up yet or offline). */
