@@ -201,7 +201,7 @@ function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L
     const mixed = fast > 0 && fast < tix.length;
     return <li className="item pending">
         <div className="itop"><strong>{sb.groupName}</strong><span className="big">{sb.names.length}</span></div>
-        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}{sb.phone ? <> · 📱 נרשמו בטלפון <span dir="ltr">…{sb.phone.slice(-4)}</span></> : null}</div>
+        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}{sb.checkinId ? <> · 📱 נרשמו בטלפון{sb.idTail ? <> · ת"ז <span dir="ltr">…{sb.idTail}</span></> : sb.phone ? <> · <span dir="ltr">…{sb.phone.slice(-4)}</span></> : null}</> : null}</div>
         <ul className="plain dlist">
             {sb.names.map((n, i) => <li key={i} className="trow"><span className="tname">{n}</span>
                 <TicketChips core={core} value={tix[i]} onChange={t => setTix(tix.map((x, j) => (j === i ? t : x)))} label={`כרטיס ל${n}`} minutes={minutes} /></li>)}
@@ -1014,7 +1014,7 @@ function TimingSettings({ core, update, rx }: { core: L.Core; update: Update; rx
 /** Counter sign for phone check-in: QR, link, print. */
 function JoinSign({ ok }: { ok: boolean | null }) {
     return <Group label="הרשמה בטלפון (QR בדלפק)" heading>
-        <p className="meta">הלקוח סורק, מקליד טלפון, ומי שכבר היה מזוהה לבד. ההרשמה קופצת בקופה תחת "ממתינים לתשלום".</p>
+        <p className="meta">הלקוח סורק, מקליד תעודת זהות, ומי שכבר היה מזוהה לבד. ההרשמה קופצת בקופה תחת "ממתינים לתשלום".</p>
         <div className="join-sign"><JoinQr size={180} /><div>
             <p className="meta" dir="ltr">{joinUrl()}</p>
             <div className="actions"><Btn kind="primary" small onClick={printJoinSign}>הדפס שלט</Btn><Btn small onClick={() => window.open(joinUrl(), '_blank')}>פתח את הדף</Btn></div>

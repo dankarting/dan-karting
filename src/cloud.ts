@@ -120,7 +120,7 @@ export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void
 // The public page never reads customer data directly: it calls two database functions that return only short names.
 export const phoneDigits = (p: string) => p.replace(/\D/g, '');
 export const validPhone = (p: string) => /^0\d{8,9}$/.test(phoneDigits(p));
-export type CheckinRow = { id: number; at: string; phone: string; names: string[]; minutes: number };
+export type CheckinRow = { id: number; at: string; phone?: string; tz_tail?: string | null; names: string[]; minutes: number };
 
 /** Saved short names for this phone ([] = new customer); 'code' = an SMS code is needed first; null = cloud not reachable. */
 export async function checkinLookup(phone: string, token?: string): Promise<string[] | 'code' | null> {
@@ -157,6 +157,34 @@ export async function checkinSubmit(phone: string, pick: number[], fresh: string
     if (m.includes('no names')) return 'צריך לפחות שם אחד';
     if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
     if (m.includes('need code')) return 'צריך לאמת את הטלפון עם קוד. חזרו להתחלה.';
+    return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
+}
+// ---- ID number (ת"ז) check-in: the number goes to the database functions only; they keep a salted fingerprint, never the number.
+/** Israeli ID check digit (9 digits, shorter numbers padded with zeros). */
+export function validTz(raw: string): boolean {
+    const d = raw.replace(/\D/g, '');
+    if (d.length < 5 || d.length > 9) return false;
+    const z = d.padStart(9, '0');
+    if (/^0+$/.test(z)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) { let n = Number(z[i]) * ((i % 2) + 1); if (n > 9) n -= 9; sum += n; }
+    return sum % 10 === 0;
+}
+const tzOf = (raw: string) => raw.replace(/\D/g, '').padStart(9, '0');
+/** Saved short names for this ID ([] = new customer), or null if the cloud could not be reached. */
+export async function checkinLookupId(tz: string): Promise<string[] | null> {
+    const { data, error } = await supabase.rpc('checkin_lookup_id', { p_tz: tzOf(tz) });
+    if (error) return null;
+    return Array.isArray(data) ? (data as string[]) : [];
+}
+export async function checkinSubmitId(tz: string, pick: number[], fresh: string[], minutes: number): Promise<string | null> {
+    const { error } = await supabase.rpc('checkin_submit_id', { p_tz: tzOf(tz), p_pick: pick, p_new: fresh, p_minutes: minutes });
+    if (!error) return null;
+    const m = error.message || '';
+    if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
+    if (m.includes('bad id')) return 'מספר תעודת הזהות לא תקין';
+    if (m.includes('no names')) return 'צריך לפחות שם אחד';
+    if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
     return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
 }
 /** Staff: takes all open check-ins once (null = table not set up yet or offline). */

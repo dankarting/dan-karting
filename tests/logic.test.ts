@@ -583,6 +583,9 @@ test('phone check-in -> pending at the cashier, once per check-in id, then paid 
     assert.equal(p.length, 1);
     assert.equal(p[0].groupName, 'דני כהן +1'); assert.deepEqual(p[0].names, ['דני כהן', 'רון']);
     assert.equal(p[0].phone, '0521234567'); assert.equal(p[0].minutes, 20); assert.equal(p[0].checkinId, 7);
+    // ID-number check-in: only the last digits travel to the cashier
+    const c2 = L.addCheckins(L.initialCore(), [{ id: 8, at: new Date(1000).toISOString(), phone: '', tz_tail: '782', names: ['נאור'], minutes: 10 }]);
+    assert.equal(L.pendingOf(c2)[0].idTail, '782'); assert.equal(L.pendingOf(c2)[0].phone, undefined); assert.equal(L.pendingOf(c2)[0].groupName, 'נאור');
     c = L.markPaidAndPlan(c, p[0].id, 2000);
     assert.equal(L.pendingOf(c).length, 0); assert.equal(c.groups.length, 1); assert.deepEqual(c.groups[0].names, ['דני כהן', 'רון']);
     assert.equal(c.groups[0].minutes, 20);

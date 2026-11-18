@@ -28,8 +28,8 @@ export type Submission = { id: string; groupName: string; names: string[]; creat
     tickets?: string[];
     /** Heat length the customer chose (10 or 20). */
     minutes?: number;
-    /** Phone check-in (?join): the customer's phone and the cloud check-in id (stops a check-in being added twice). */
-    phone?: string; checkinId?: number };
+    /** Check-in from the customer's phone (?join): last digits of the phone or ID number, and the cloud check-in id (stops a check-in being added twice). */
+    phone?: string; idTail?: string; checkinId?: number };
 
 export type Entry = { groupId: string; count: number };
 export type HeatStatus = 'draft' | 'approved' | 'done';
@@ -1021,15 +1021,15 @@ export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { 
 };
 
 /** Phone check-ins from the QR page become pending registrations at the cashier (same as the form). Already-added ids are skipped. */
-export function addCheckins(core: Core, rows: { id: number; at: string; phone: string; names: string[]; minutes: number }[]): Core {
+export function addCheckins(core: Core, rows: { id: number; at: string; phone?: string; tz_tail?: string | null; names: string[]; minutes: number }[]): Core {
     let c = core;
     for (const r of rows) {
         if ((c.submissions ?? []).some(x => x.checkinId === r.id)) continue;
         const first = (r.names[0] ?? '').trim();
         const label = r.names.length > 1 ? `${first} +${r.names.length - 1}` : first;
-        const res = submitForm(c, label || `טלפון ${r.phone.slice(-4)}`, r.names, Date.parse(r.at) || Date.now(), undefined, r.minutes);
+        const res = submitForm(c, label || 'הרשמה מהטלפון', r.names, Date.parse(r.at) || Date.now(), undefined, r.minutes);
         if (!res.id) continue;
-        c = { ...res.core, submissions: (res.core.submissions ?? []).map(x => (x.id === res.id ? { ...x, phone: r.phone, checkinId: r.id } : x)) };
+        c = { ...res.core, submissions: (res.core.submissions ?? []).map(x => (x.id === res.id ? { ...x, ...(r.phone ? { phone: r.phone } : {}), ...(r.tz_tail ? { idTail: r.tz_tail } : {}), checkinId: r.id } : x)) };
     }
     return c;
 }
