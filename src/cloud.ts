@@ -23,7 +23,12 @@ export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[]; ex
 export const PUBLIC_HISTORY = 150;
 export function boardOf(core: L.Core, now: number, hist: L.Result[] = [], ext: ExtBoard | null = null): BoardPayload {
     const { submissions: _unpaid, ...rest } = core;
-    return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
+    // Phone check-ins keep only their number, status and groups (no names), so the customer's personal area can follow them.
+    const subs = (core.submissions ?? []).filter(x => x.checkinId != null)
+        .map(x => ({ id: x.id, groupName: '', names: [], createdAt: 0, status: x.status, checkinId: x.checkinId, ...(x.groupIds ? { groupIds: x.groupIds } : {}), ...(x.groupId ? { groupId: x.groupId } : {}) }));
+    // Staff notes never leave the staff computers.
+    const groups = rest.groups.map(g => ({ ...g, note: '' }));
+    return { core: { ...rest, groups, submissions: subs }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
 }
 
 export async function publishBoard(payload: BoardPayload): Promise<string | null> {
@@ -113,5 +118,74 @@ export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void
             if (r?.id) cb(r.id, { data: r.data ?? null, rev: Number(r.rev) || 0 });
         })
         .subscribe(s => onStatus?.(s));
+    return () => { void supabase.removeChannel(ch); };
+}
+
+// ---------------------------------------------------------------- customer check-in (?join, docs/checkin-id.sql + docs/security.sql)
+export type CheckinRow = { id: number; at: string; phone?: string; tz_tail?: string | null; id_hash?: string | null; names: string[]; minutes: number };
+
+// ---- ID number (ת"ז) check-in: the number goes to the database functions only; they keep a salted fingerprint, never the number.
+/** Israeli ID check digit (9 digits, shorter numbers padded with zeros). */
+export function validTz(raw: string): boolean {
+    const d = raw.replace(/\D/g, '');
+    if (d.length < 5 || d.length > 9) return false;
+    const z = d.padStart(9, '0');
+    if (/^0+$/.test(z)) return false;
+    let sum = 0;
+    for (let i = 0; i < 9; i++) { let n = Number(z[i]) * ((i % 2) + 1); if (n > 9) n -= 9; sum += n; }
+    return sum % 10 === 0;
+}
+const tzOf = (raw: string) => raw.replace(/\D/g, '').padStart(9, '0');
+/** Saved short names for this ID ([] = new customer), or null if the cloud could not be reached. */
+export async function checkinLookupId(tz: string): Promise<string[] | null> {
+    const { data, error } = await supabase.rpc('checkin_lookup_id', { p_tz: tzOf(tz) });
+    if (error) return null;
+    return Array.isArray(data) ? (data as string[]) : [];
+}
+export async function checkinSubmitId(tz: string, pick: number[], fresh: string[], minutes: number): Promise<{ id: number } | string> {
+    const { data, error } = await supabase.rpc('checkin_submit_id', { p_tz: tzOf(tz), p_pick: pick, p_new: fresh, p_minutes: minutes });
+    if (!error) return { id: Number(data) };
+    const m = error.message || '';
+    if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
+    if (m.includes('bad id')) return 'מספר תעודת הזהות לא תקין';
+    if (m.includes('busy')) return 'יש עומס כרגע. נסו שוב בעוד דקה או פנו לקופה.';
+    if (m.includes('no names')) return 'צריך לפחות שם אחד';
+    if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
+    return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
+}
+/** Staff: file finished rides under the customers' ID fingerprints (saving the same heat twice adds nothing). */
+export async function saveRides(rows: L.Ride[]): Promise<string | null> {
+    if (rows.length === 0) return null;
+    const { error } = await supabase.from('rides').upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+    return error ? error.message : null;
+}
+export type MyRide = { at: string; heat: number | null; minutes: number | null; kart: number | null; pos: number | null; of: number | null; best: number | null; laps: number | null };
+export type MyRides = { known: false } | { known: true; name: string; visits: number; best: number | null; rides: MyRide[] };
+/** Customers' area: my best lap and rides, by my ID number. A string is an error to show. */
+export async function myRides(tz: string): Promise<MyRides | string> {
+    const { data, error } = await supabase.rpc('my_rides', { p_tz: tzOf(tz) });
+    if (!error && data) return data as MyRides;
+    const m = error?.message || '';
+    if (m.includes('bad id')) return 'מספר תעודת הזהות לא תקין';
+    if (m.includes('busy')) return 'יש עומס כרגע. נסו שוב בעוד דקה.';
+    return 'אין חיבור כרגע. נסו שוב.';
+}
+/** Is the signed-in account on the staff list? null = could not check (offline, or docs/security.sql not run yet). */
+export async function amStaff(): Promise<boolean | null> {
+    const { data, error } = await supabase.rpc('is_staff');
+    if (error) return null;
+    return data === true;
+}
+/** Staff: takes all open check-ins once (null = table not set up yet or offline). */
+export async function checkinClaim(): Promise<CheckinRow[] | null> {
+    const { data, error } = await supabase.rpc('checkin_claim');
+    if (error) return null;
+    return (data ?? []) as CheckinRow[];
+}
+/** Calls back when a new check-in arrives (staff only). */
+export function subscribeCheckins(cb: () => void): () => void {
+    const ch = supabase.channel('checkins_new')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'checkins' }, () => cb())
+        .subscribe();
     return () => { void supabase.removeChannel(ch); };
 }

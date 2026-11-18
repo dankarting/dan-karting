@@ -4,14 +4,14 @@ import * as L from './logic';
 import * as Cloud from './cloud';
 import * as R from './rentix';
 import { useShared, type SyncStatus } from './shared';
+import { JoinQr, joinUrl, printJoinSign } from './Join';
 
 /** Data saved by the older per-device version, used once as the starting point. */
 function legacy<T>(k: string): T | null { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) as T : null; } catch { return null; } }
 import type { Session } from '@supabase/supabase-js';
 
-type Tab = 'form' | 'cashier' | 'heats' | 'live' | 'history' | 'settings';
+type Tab = 'cashier' | 'heats' | 'live' | 'history' | 'settings';
 const TABS: { id: Tab; label: string }[] = [
-    { id: 'form', label: 'הרשמה' },
     { id: 'cashier', label: 'קופה' },
     { id: 'heats', label: 'מקצים' },
     { id: 'live', label: 'חי' },
@@ -128,57 +128,6 @@ function NameRows({ core, rows, setRows, minutes, onEdit }: { core: L.Core; rows
     </>;
 }
 
-function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
-    const [group, setGroup] = useState('');
-    const def = core.settings.tickets[0] ?? '';
-    const blank = (): FormRow[] => [{ name: '', ticket: def }, { name: '', ticket: def }];
-    const [rows, setRows] = useState<FormRow[]>(blank);
-    const [minutes, setMinutes] = useState(10);
-    const [error, setError] = useState('');
-    const [sent, setSent] = useState<{ id: string; group: string; n: number; tickets: string[]; minutes: number } | null>(null);
-    const names = rows.map(r => r.name);
-    const tix = rows.map(r => r.ticket);
-    const chosen = rows.filter(r => r.name.trim()).map(r => r.ticket);
-    const filled = chosen.length;
-    const submit = () => {
-        let res: { id?: string; error?: string } = {};
-        update(c => { const r = L.submitForm(c, group, names, Date.now(), tix, minutes); res = r; return r.core; });
-        if (res.error || !res.id) { setError(res.error ?? 'שגיאה'); return; }
-        setSent({ id: res.id, group: group.trim(), n: filled, tickets: chosen, minutes }); setGroup(''); setRows(blank()); setMinutes(10); setError('');
-    };
-    const sample = () => {
-        const k = Math.floor(Math.random() * 20);
-        setGroup(`קבוצה לדוגמה ${k + 1}`);
-        const n = 3 + (k % 4);
-        setRows(Array.from({ length: n }, (_, i) => ({ name: L.DEMO_NAMES[(k + i * 7) % L.DEMO_NAMES.length], ticket: def })));
-    };
-    if (sent) return <Group label="נשלח לקופה" heading>
-        <div className="sent">
-            <div className="sent-num">#{sent.id.replace(/\D/g, '')}</div>
-            <p><b>{sent.group}</b> · {sent.n} משתתפים · {sent.minutes} דקות</p>
-            <PriceLine core={core} tickets={sent.tickets} minutes={sent.minutes} />
-            <p>ההרשמה מחכה בקופה. גשו לקופה לתשלום. אחרי אישור התשלום תיכנסו לתור ותוזמנו במסך המסלול.</p>
-        </div>
-        <Btn kind="primary" onClick={() => setSent(null)}>הרשמה חדשה</Btn>
-    </Group>;
-    return <Group label="הרשמה לקארטינג" heading>
-        <Callout title="דמו" tone="warning">זה טופס לדוגמה. אל תזינו שמות אמיתיים. ליד כל שם בוחרים כרטיס. ליגה ומאסטר ⚡ הן מכוניות מהירות. בזוגי יושבים שניים ברכב אחד, אז נפתחת שורה לשם השני. אין תשלום בטופס: משלמים בקופה.</Callout>
-        <div className="form">
-            <label className="field"><span className="flabel">שם הקבוצה</span>
-                <input className="inp" value={group} onChange={e => { setError(''); setGroup(e.target.value); }} placeholder="למשל: החבר׳ה מהעבודה" maxLength={40} />
-            </label>
-            <div className="field"><span className="flabel">אורך המקצה</span><MinuteChips value={minutes} onChange={setMinutes} /></div>
-            <div className="field"><span className="flabel">שמות המשתתפים ({filled})</span>
-                <NameRows core={core} rows={rows} setRows={setRows} minutes={minutes} onEdit={() => setError('')} />
-                <div className="actions"><Btn small onClick={sample}>מלא דוגמה</Btn></div>
-            </div>
-            <PriceLine core={core} tickets={chosen.length ? chosen : rows.map(r => r.ticket)} minutes={minutes} />
-            {error && <div className="warn" role="alert">{error}</div>}
-            <Btn kind="primary" onClick={submit}>שליחה לקופה</Btn>
-        </div>
-    </Group>;
-}
-
 /** Small label: ticket type, fast-kart class, family. */
 function GroupTags({ core, g }: { core: L.Core; g: L.Group }) {
     return <span className="gtags">
@@ -200,7 +149,7 @@ function PendingItem({ core, update, sb }: { core: L.Core; update: Update; sb: L
     const mixed = fast > 0 && fast < tix.length;
     return <li className="item pending">
         <div className="itop"><strong>{sb.groupName}</strong><span className="big">{sb.names.length}</span></div>
-        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}</div>
+        <div className="meta">#{sb.id.replace(/\D/g, '')} · {timeOf(sb.createdAt)}{sb.checkinId ? <> · 📱 נרשמו בטלפון{sb.idTail ? <> · ת"ז <span dir="ltr">…{sb.idTail}</span></> : sb.phone ? <> · <span dir="ltr">…{sb.phone.slice(-4)}</span></> : null}</> : null}</div>
         <ul className="plain dlist">
             {sb.names.map((n, i) => <li key={i} className="trow"><span className="tname">{n}</span>
                 <TicketChips core={core} value={tix[i]} onChange={t => setTix(tix.map((x, j) => (j === i ? t : x)))} label={`כרטיס ל${n}`} minutes={minutes} /></li>)}
@@ -256,7 +205,7 @@ function Cashier({ core, update, goHeats }: { core: L.Core; update: Update; goHe
     return <>
         <Group label={`ממתינים לתשלום (${pending.length})`} heading>
             <p className="meta">הרשמות שהלקוחות שלחו מהטופס. בוחרים סוג כרטיס ומסמנים "שולם": הקבוצה נכנסת לתור והמקצים מסתדרים לבד (טיוטה, הקופאית מאשרת). אישור התשלום כאן מדומה: אין חיוב ואין סליקה.</p>
-            {pending.length === 0 && <p className="empty">אין הרשמות שממתינות. לקוחות נרשמים בלשונית "הרשמה".</p>}
+            {pending.length === 0 && <p className="empty">אין הרשמות שממתינות. לקוחות נרשמים מהטלפון שלהם (QR בדלפק), והשמות קופצים כאן לבד.</p>}
             <ul className="list">
                 {pending.map(sb => <PendingItem key={sb.id} core={core} update={update} sb={sb} />)}
             </ul>
@@ -474,9 +423,14 @@ function WallDisplay(p: { title: string; sub: string; totalLaps: number; clock?:
     // podium at the end of a heat: shown for a few seconds over the results, tap to close
     const [podium, setPodium] = useState(false);
     // last-lap call: giant checkered flag waves across the screen for 3.5 s when the heat enters its final 30 s
+    // Only when the heat ENTERS its last lap while the board is open: opening the board in the middle of (or long after)
+    // the last lap must not throw the flag over the screen every time.
     const [lastCall, setLastCall] = useState(false);
+    const llSeen = useRef(!!p.lastLap);
     useEffect(() => {
-        if (!p.lastLap) { setLastCall(false); return; }
+        if (!p.lastLap) { llSeen.current = false; setLastCall(false); return; }
+        if (llSeen.current) return;
+        llSeen.current = true;
         setLastCall(true);
         const t = setTimeout(() => setLastCall(false), 3_500);
         return () => clearTimeout(t);
@@ -1010,7 +964,20 @@ function TimingSettings({ core, update, rx }: { core: L.Core; update: Update; rx
     </Group>;
 }
 
-function Settings({ core, update, hist, onReset, site, rx }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site: React.ReactNode; rx?: RxState }) {
+/** Counter sign for phone check-in: QR, link, print. */
+function JoinSign({ ok }: { ok: boolean | null }) {
+    return <Group label="הרשמה בטלפון (QR בדלפק)" heading>
+        <p className="meta">הלקוח סורק, מקליד תעודת זהות, ומי שכבר היה מזוהה לבד. ההרשמה קופצת בקופה תחת "ממתינים לתשלום".</p>
+        <div className="join-sign"><JoinQr size={180} /><div>
+            <p className="meta" dir="ltr">{joinUrl()}</p>
+            <div className="actions"><Btn kind="primary" small onClick={printJoinSign}>הדפס שלט</Btn><Btn small onClick={() => window.open(joinUrl(), '_blank')}>פתח את הדף</Btn></div>
+        </div></div>
+        {ok === false && <div className="warn" role="alert">הרשמה בטלפון עוד לא מופעלת בענן. צריך להריץ פעם אחת את docs/checkin.sql ב-Supabase (SQL Editor).</div>}
+        {ok === true && <p className="meta">✓ מחובר: הרשמות מהטלפון נכנסות לקופה.</p>}
+    </Group>;
+}
+
+function Settings({ core, update, hist, onReset, site, rx, checkinOk = null }: { core: L.Core; update: Update; hist: L.Result[]; onReset: () => void; site: React.ReactNode; rx?: RxState; checkinOk?: boolean | null }) {
     const s = core.settings;
     const [t, setT] = useState('');
     const [confirm, setConfirm] = useState(false);
@@ -1018,6 +985,7 @@ function Settings({ core, update, hist, onReset, site, rx }: { core: L.Core; upd
     const overDraft = core.heats.filter(h => h.status === 'draft' && L.heatCount(h) > s.capacity).length;
     const overQueued = core.heats.filter(h => h.status === 'approved' && L.heatCount(h) > s.capacity).length;
     return <>
+        <JoinSign ok={checkinOk} />
         {site}
         <TimingSettings core={core} update={update} rx={rx} />
         <Group label="הגדרות" heading>
@@ -1112,6 +1080,25 @@ export function App() {
     // Every heat this device finished goes to the cloud archive as soon as staff is signed in (catches up after offline use).
     useEffect(() => { if (ready && session) void Cloud.archiveHeats(histRef.current); }, [ready, session]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Phone check-ins (?join): every signed-in staff computer takes new ones into "ממתינים לתשלום" (each one once, see checkin_claim).
+    const [checkinOk, setCheckinOk] = useState<boolean | null>(null);
+    useEffect(() => {
+        if (!session) return;
+        let busy = false;
+        const pull = async () => {
+            if (busy) return; busy = true;
+            try {
+                const rows = await Cloud.checkinClaim();
+                setCheckinOk(rows !== null);
+                if (rows && rows.length) update(c => L.addCheckins(c, rows));
+            } finally { busy = false; }
+        };
+        void pull();
+        const off = Cloud.subscribeCheckins(() => void pull());
+        const i = setInterval(() => void pull(), 5000);
+        return () => { off(); clearInterval(i); };
+    }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Latest state for timers and chained edits: every change goes through update(fn) on the newest core.
     const coreRef = useRef(core); coreRef.current = core;
     const histRef = useRef(hist); histRef.current = hist;
@@ -1157,7 +1144,7 @@ export function App() {
         let { result } = L.finishRun(c0, t);
         // a heat run over the real timing (quick start with the bridge) saves what the track timing measured
         if (h0 && e && R.extActive(e)) result = { ...R.extResult(e, t), heatNum: h0.num, title: `מקצה ${h0.num}`, minutes: c0.live?.durationMs ? Math.round(c0.live.durationMs / 60_000) : undefined };
-        if (result) { const res = result; updHist(h => L.trimHistory(L.mergeResults([res], h), L.SHARED_HISTORY_BYTES)); void Cloud.archiveHeats([res]); }
+        if (result) { const res = result; updHist(h => L.trimHistory(L.mergeResults([res], h), L.SHARED_HISTORY_BYTES)); void Cloud.archiveHeats([res]); void Cloud.saveRides(L.ridesOf(c0, h0, res)); }
         update(c => (c.live && c.live.heatId === h0?.id) || !result ? L.finishRun(c, t).core : c);
     };
     // quick start: real timing runs at real speed; the demo simulation keeps its usual speed
@@ -1210,18 +1197,17 @@ export function App() {
 
     return <FileCard lang="he">
         <div className="dk">
-            <div className="brandbar"><Logo /><span className="brand-tag">דמו · נתוני דמה</span><span className={`brand-tag sync-tag ${syncSt}`} title={SYNC_TEXT[syncSt]}>{SYNC_SHORT[syncSt]}</span>{sending && <span className="brand-tag onair-tag">● משדר לאתר</span>}{rx.up && <span className={`brand-tag rx-tag${rx.connected ? '' : ' bad'}`} title={rx.error}>{rx.connected ? (extNow ? `● ${R.sourceName(rx.source)} · ${extNow.run || 'מקצה'}` : `● ${R.sourceName(rx.source)} מחובר`) : '⚠ אין חיבור ל-RentiX או לדקודר'}</span>}{core.live && <button type="button" className="onair" onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} על המסלול</button>}</div>
+            <div className="brandbar"><Logo /><span className={`brand-tag sync-tag ${syncSt}`} title={SYNC_TEXT[syncSt]}>{SYNC_SHORT[syncSt]}</span>{sending && <span className="brand-tag onair-tag">● משדר לאתר</span>}{rx.up && <span className={`brand-tag rx-tag${rx.connected ? '' : ' bad'}`} title={rx.error}>{rx.connected ? (extNow ? `● ${R.sourceName(rx.source)} · ${extNow.run || 'מקצה'}` : `● ${R.sourceName(rx.source)} מחובר`) : '⚠ אין חיבור ל-RentiX או לדקודר'}</span>}{core.live && <button type="button" className="onair" onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} על המסלול</button>}</div>
             <Header title="מקצים ותור" fact="גרסת דמו · נתוני דמה" intro="קופה, שיבוץ מקצים, תור פשוט, קריאה למסלול וזמנים מדומים. אפשר לשדר את לוח הזמנים לאתר ציבורי (הגדרות). אין חיבור לשעון של העסק." />
             <nav className="tabs" aria-label="מסכים">
                 {TABS.map(t => <button key={t.id} type="button" className={tab === t.id ? 'on' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}>{t.label}{t.id === 'live' && core.live ? <i className="live-dot" aria-label="מקצה על המסלול">●</i> : counts[t.id] ? <i>{counts[t.id]}</i> : null}</button>)}
             </nav>
             {!ready && <p className="empty">טוען נתונים שמורים…</p>}
-            {ready && tab === 'form' && <CustomerForm core={core} update={update} />}
             {ready && tab === 'cashier' && <Cashier core={core} update={update} goHeats={goHeats} />}
             {ready && tab === 'heats' && <Heats core={core} update={update} />}
             {ready && tab === 'live' && <Live rx={rx} core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} save={save} start={start} cancel={cancel} goHeats={goHeats} quickStart={quickStart} />}
             {ready && tab === 'history' && <HistoryTab core={core} update={update} hist={hist} now={now} />}
-            {ready && tab === 'settings' && <Settings rx={rx} site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); updHist(() => []); }} />}
+            {ready && tab === 'settings' && <Settings checkinOk={checkinOk} rx={rx} site={<PublicSite session={session} on={broadcast} setOn={setBroadcast} status={pubStatus} />} core={core} update={update} hist={hist} onReset={() => { setAuto(false); setScreen(null); update(() => L.initialCore()); updHist(() => []); }} />}
             <Closing>{persistNote} לא נשלח ולא שולם דבר.</Closing>
             {ready && screen === 'track' && <TrackScreen core={core} now={now} onClose={() => setScreen(null)} ext={extNow} ctl={{ start, save, cancel, update, quickStart }} />}
             {ready && screen === 'last' && lastRes && <WallDisplay title={`תוצאות · ${L.resultTitle(lastRes)}`} sub={`${dayOf(lastRes.at)} ${timeOf(lastRes.at)}`} totalLaps={lastRes.laps} state="done" rows={resultRowsOf(lastRes)} onClose={() => setScreen(null)} />}
@@ -1250,6 +1236,7 @@ export function PublicBoard() {
     const hist = board.hist ?? [];
     const nav = <nav className="pub-tabs" aria-label="לשוניות">
         {PUB_TABS.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'on' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}{id === 'results' && hist.length ? <i>{hist.length}</i> : null}</button>)}
+        <a className="pub-tab-join" href="?join">הרשמה / האזור שלי</a>
     </nav>;
     if (tab !== 'live') return <div className="dk pub-hist">
         <div className="pub-hist-top"><Logo /><span className={`pub-conn static ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</span></div>
@@ -1309,7 +1296,19 @@ function StaffLoginForm({ onDone }: { onDone?: () => void }) {
 export function StaffGate({ children }: { children: React.ReactNode }) {
     const [session, setSession] = useState<Session | null | undefined>(undefined);
     useEffect(() => Cloud.onSession(setSession), []);
-    if (session === undefined) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    // Signed in is not enough: the account must be on the staff list (docs/security.sql). The database enforces this too;
+    // this only shows a clear message instead of an empty app. null = could not check (offline / SQL not run): let in.
+    const [staff, setStaff] = useState<boolean | null | undefined>(undefined);
+    const uid = session?.user.id;
+    useEffect(() => { if (!uid) { setStaff(undefined); return; } let live = true; void Cloud.amStaff().then(v => { if (live) setStaff(v); }); return () => { live = false; }; }, [uid]);
+    if (session === undefined || (session && staff === undefined)) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    if (session && staff === false) return <div className="dk pub-wait">
+        <Logo big />
+        <h1 className="gate-title">החשבון הזה אינו חשבון צוות</h1>
+        <p>אזור הצוות פתוח רק לעובדים.</p>
+        <button type="button" className="kb primary" onClick={() => void Cloud.signOut()}>התנתקות</button>
+        <a className="pub-staff" href="./">למסך הצופים</a>
+    </div>;
     if (session) return <>{children}</>;
     return <div className="dk pub-wait">
         <Logo big />

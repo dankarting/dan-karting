@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as L from '../src/logic';
 import * as R from '../src/rentix';
+import { boardOf } from '../src/cloud';
 
 // Tiny counted harness: each test() is one named case; the run fails (exit 1) on any failure.
 let passed = 0; const failed: string[] = [];
@@ -487,8 +488,6 @@ test('quick start: open heat with no registration, karts appear as they cross, c
     assert.deepEqual(L.queueOf(c).map(x => x.id), L.queueOf(twoQueued()).map(x => x.id), 'the queue is untouched');
 });
 
-console.log(`\n${passed} passed, ${failed.length} failed`);
-if (failed.length) process.exit(1);
 
 test('10- and 20-minute groups never share a heat', () => {
     let c = L.initialCore();
@@ -574,6 +573,80 @@ test('direct decoder board (dk-bridge): transponders mapped to karts in Settings
     assert.equal(R.sourceName('decoder'), 'דקודר AMB'); assert.equal(R.sourceName('rentix'), 'RentiX');
 });
 
+test('phone check-in -> pending at the cashier, once per check-in id, then paid -> queue', () => {
+    let c = L.initialCore();
+    const rows = [{ id: 7, at: new Date(1000).toISOString(), phone: '0521234567', names: ['דני כהן', 'רון'], minutes: 20 }];
+    c = L.addCheckins(c, rows);
+    c = L.addCheckins(c, rows); // the same check-in again (two computers / retry): not added twice
+    const p = L.pendingOf(c);
+    assert.equal(p.length, 1);
+    assert.equal(p[0].groupName, 'דני כהן +1'); assert.deepEqual(p[0].names, ['דני כהן', 'רון']);
+    assert.equal(p[0].phone, '0521234567'); assert.equal(p[0].minutes, 20); assert.equal(p[0].checkinId, 7);
+    // ID-number check-in: only the last digits travel to the cashier
+    const c2 = L.addCheckins(L.initialCore(), [{ id: 8, at: new Date(1000).toISOString(), phone: '', tz_tail: '782', names: ['נאור'], minutes: 10 }]);
+    assert.equal(L.pendingOf(c2)[0].idTail, '782'); assert.equal(L.pendingOf(c2)[0].phone, undefined); assert.equal(L.pendingOf(c2)[0].groupName, 'נאור');
+    c = L.markPaidAndPlan(c, p[0].id, 2000);
+    assert.equal(L.pendingOf(c).length, 0); assert.equal(c.groups.length, 1); assert.deepEqual(c.groups[0].names, ['דני כהן', 'רון']);
+    assert.equal(c.groups[0].minutes, 20);
+});
+
+test('personal area status: pending -> waiting/queued -> called -> racing -> done with result', () => {
+    let c = L.addCheckins(L.initialCore(), [{ id: 41, at: new Date(1000).toISOString(), phone: '', tz_tail: '094', names: ['נאור'], minutes: 10 }]);
+    assert.equal(L.myStatus(c, [], 41).kind, 'pending');
+    assert.equal(L.myStatus(c, [], 99).kind, 'pending', 'not picked up yet');
+    c = L.markPaidAndPlan(c, L.pendingOf(c)[0].id, 2000);
+    assert.equal(L.myStatus(c, [], 41).kind, 'waiting', 'draft heat');
+    const h = c.heats[0];
+    c = L.approveHeat(c, h.id);
+    const q = L.myStatus(c, [], 41);
+    assert.equal(q.kind, 'queued'); assert.equal(q.heatNum, h.num); assert.equal(q.ahead, 0); assert.equal(q.label, 'נאור'); assert.ok(q.kart! > 0);
+    c = L.callHeat(c, h.id);
+    assert.equal(L.myStatus(c, [], 41).kind, 'called');
+    c = L.startHeat(c, h.id, 10_000, 1, 20);
+    assert.equal(L.myStatus(c, [], 41).kind, 'racing');
+    const fin = L.finishRun(c, 10_000 + 20 * 60_000);
+    const d = L.myStatus(fin.core, fin.result ? [fin.result] : [], 41);
+    assert.equal(d.kind, 'done'); assert.ok(d.result && d.result.pos >= 1 && d.result.of >= 1);
+    c = L.addCheckins(L.initialCore(), [{ id: 5, at: new Date(0).toISOString(), names: ['x'], minutes: 10 }]);
+    c = L.cancelSubmission(c, L.pendingOf(c)[0].id);
+    assert.equal(L.myStatus(c, [], 5).kind, 'cancelled');
+});
+
+test('rides: a finished heat files a ride under the ID fingerprint of each checked-in driver', () => {
+    let c = L.addCheckins(L.initialCore(), [
+        { id: 1, at: new Date(1000).toISOString(), tz_tail: '094', id_hash: 'h-a', names: ['אבי'], minutes: 10 },
+        { id: 2, at: new Date(1100).toISOString(), tz_tail: '093', id_hash: 'h-b', names: ['בני'], minutes: 10 },
+        { id: 3, at: new Date(1200).toISOString(), tz_tail: '011', names: ['בלי ת"ז'], minutes: 10 },
+    ]);
+    for (const p of L.pendingOf(c)) c = L.markPaidAndPlan(c, p.id, 2000);
+    const h = c.heats[0];
+    c = L.startHeat(L.approveHeat(c, h.id), h.id, 10_000, 1, 10);
+    const run = L.runningHeat(c);
+    const fin = L.finishRun(c, 10_000 + 10 * 60_000);
+    assert.ok(fin.result);
+    const rides = L.ridesOf(c, run, fin.result!);
+    assert.deepEqual(rides.map(r => r.id_hash).sort(), ['h-a', 'h-b']);
+    for (const r of rides) {
+        const res = fin.result!; const row: L.Result["rows"][number] = res.rows.find(x => x.kart === r.kart)!;
+        assert.equal(r.pos, row.pos); assert.equal(r.best_ms, row.best); assert.equal(r.of_n, fin.result!.rows.length); assert.equal(r.heat_num, h.num);
+    }
+    assert.equal(new Set(rides.map(r => r.id)).size, 2, 'ride ids unique');
+    assert.deepEqual(L.ridesOf(c, run, fin.result!).map(r => r.id), rides.map(r => r.id), 'same heat -> same ids (saved once)');
+});
+
+test('public board: no staff notes, no names of unpaid registrations, check-ins keep only id + status', () => {
+    let c = L.addGroup(L.initialCore(), { name: 'קבוצה', size: 2, ticket: 'רגיל', keepTogether: true, note: 'לקוח עצבני' }, 1);
+    c = L.submitForm(c, 'טופס', ['סוד אחד'], 2).core;
+    c = L.addCheckins(c, [{ id: 3, at: new Date(5).toISOString(), phone: '0521234567', tz_tail: '094', id_hash: 'fp-secret-hash', names: ['שם פרטי'], minutes: 10 }]);
+    const b = boardOf(c, 10);
+    const txt = JSON.stringify(b);
+    assert.ok(!txt.includes('לקוח עצבני'), 'staff note leaked');
+    assert.ok(!txt.includes('סוד אחד') && !txt.includes('שם פרטי'), 'unpaid names leaked');
+    assert.ok(!txt.includes('0521234567') && !txt.includes('"094"'), 'phone / id digits leaked');
+    assert.ok(!txt.includes('fp-secret-hash'), 'ID fingerprint leaked');
+    assert.equal(b.core.submissions!.length, 1); assert.equal(b.core.submissions![0].checkinId, 3);
+});
+
 test('RentiX-style sections: finished track run -> real history result; kart info per kart', () => {
     const lines = ['$I,"21:00:00.000","x"', '$B,12,"Heat 12"', '$F,0,"00:00:00","21:10:00","00:10:00.000","Finish"',
         '$A,"5","5",111,"Kart","5","",1', '$A,"7","7",222,"Kart","7","",1',
@@ -594,3 +667,6 @@ test('RentiX-style sections: finished track run -> real history result; kart inf
     assert.equal(ks[1].kart, 7); assert.equal(ks[1].best, 27_960);
     assert.equal(L.resultTitle({ ...res, title: undefined }), 'מקצה 12');
 });
+
+console.log(`\n${passed} passed, ${failed.length} failed`);
+if (failed.length) process.exit(1);

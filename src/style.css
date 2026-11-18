@@ -437,7 +437,7 @@ body { background: #0b0b0c; }
 }
 
 /* ---- public site tabs (live results / next up / race results / kart info) */
-.pub-tabs { position: fixed; inset-inline: 0; bottom: 0; z-index: 62; display: grid; grid-template-columns: repeat(4, 1fr); background: #120c0d; border-top: 2px solid var(--dk-red); padding-bottom: env(safe-area-inset-bottom); }
+.pub-tabs { position: fixed; inset-inline: 0; bottom: 0; z-index: 62; display: grid; grid-template-columns: repeat(4, 1fr) 1.25fr; background: #120c0d; border-top: 2px solid var(--dk-red); padding-bottom: env(safe-area-inset-bottom); }
 .pub-tabs button { position: relative; min-height: 50px; border: 0; background: none; font: inherit; font-size: 14px; font-weight: 700; color: #bbb; cursor: pointer; padding: 0 4px; }
 .pub-tabs button.on { color: #fff; background: rgba(227,38,43,.18); box-shadow: inset 0 3px 0 var(--dk-yellow); }
 .pub-tabs button:focus-visible { outline: 2px solid var(--dk-yellow); outline-offset: -3px; }
@@ -614,3 +614,71 @@ body { background: #0b0b0c; }
 @media (prefers-reduced-motion: reduce) { .ll-giant, .ll-giant i, .ll-giant i::after, .ll-text, .wall.lastlap .tb-head { animation: none; } }
 
 .rc-quick { background: linear-gradient(180deg, #ff9f1c, #e3262b); border-color: #ffc46b; box-shadow: 0 3px 0 #6d1a0c, 0 0 18px rgba(255,159,28,.25); }
+
+/* ---------- phone check-in (?join) ---------- */
+.join { min-height: 100vh; display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 28px 16px 40px; background: radial-gradient(120% 60% at 50% 0%, #2a0d0e 0%, #0b0b0c 60%); color: #f2efe9; }
+.join-logo { width: min(150px, 40vw); height: auto; border-radius: 8px; }
+.join-word { font-weight: 900; font-style: italic; letter-spacing: .04em; font-size: 30px; color: #fff; text-shadow: 3px 3px 0 var(--dk-red, #e10600); }
+.join-card { width: min(440px, 100%); display: grid; gap: 14px; background: #141315; border: 1px solid #2c2a2d; border-top: 4px solid var(--dk-red, #e10600); border-radius: 10px; padding: 22px 18px; }
+.join-card h1 { margin: 0; font-size: 28px; }
+.join-sub { margin: 0; color: #b9b3ab; font-size: 16px; line-height: 1.5; }
+.join-phone { font-size: 26px; min-height: 60px; letter-spacing: .06em; text-align: center; }
+.join-go { min-height: 56px; font-size: 19px; }
+.join-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.join-pick { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 0 14px; font: inherit; font-size: 18px; text-align: start; color: #f2efe9; background: #0f0e10; border: 1px solid #2c2a2d; border-radius: 8px; cursor: pointer; }
+.join-pick.on { border-color: var(--dk-yellow, #ffd400); background: #1d1a10; }
+.join-box { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: 2px solid #5a5650; border-radius: 6px; font-weight: 900; color: #111; }
+.join-pick.on .join-box { background: var(--dk-yellow, #ffd400); border-color: var(--dk-yellow, #ffd400); }
+.join-row { display: flex; gap: 8px; align-items: center; }
+.join-row .inp { min-height: 52px; font-size: 18px; }
+.join-add { border-style: dashed; }
+.join-done { text-align: center; justify-items: center; }
+.join-check { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; background: #1f8a4c; color: #fff; font-size: 42px; font-weight: 900; }
+.join-names { margin: 0; font-size: 20px; font-weight: 700; color: var(--dk-yellow, #ffd400); }
+.join .err { color: #ff7a7d; margin: 0; }
+.join-sign { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.join-qr { border-radius: 6px; flex: none; }
+.join-code { letter-spacing: .5em; font-size: 32px; }
+.join-name { min-height: 56px; font-size: 20px; }
+.join-toast { width: min(440px, 100%); background: #1f8a4c; color: #fff; font-weight: 700; padding: 12px 16px; border-radius: 8px; text-align: center; }
+.my-status { display: flex; gap: 14px; align-items: center; padding: 16px; border-radius: 10px; background: #0f0e10; border: 1px solid #2c2a2d; }
+.my-status.ok { border-color: #1f8a4c; } .my-status.wait { border-color: #5a5650; } .my-status.bad { border-color: #ff7a7d; }
+.my-status.call { border-color: var(--dk-yellow, #ffd400); background: #1d1a10; animation: my-pulse 1.4s ease-in-out infinite; }
+@keyframes my-pulse { 50% { box-shadow: 0 0 0 6px rgba(255, 212, 0, .18); } }
+@media (prefers-reduced-motion: reduce) { .my-status.call { animation: none; } }
+.my-icon { font-size: 34px; width: 48px; text-align: center; flex: none; }
+.my-title { font-size: 22px; font-weight: 800; }
+.my-sub { color: #b9b3ab; font-size: 15px; margin-top: 2px; line-height: 1.45; }
+.my-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 8px; }
+.my-facts div { background: #0f0e10; border: 1px solid #2c2a2d; border-radius: 8px; padding: 10px; text-align: center; display: grid; gap: 2px; }
+.my-facts span { color: #8f8a83; font-size: 13px; } .my-facts b { font-size: 24px; }
+.join-a { display: grid; place-items: center; text-decoration: none; }
+.join-card > .join-link { margin: 0 auto; }
+.join .join-link { background: none !important; border: 0 !important; color: var(--dk-yellow, #ffd400); }
+.check-card { width: min(640px, 100%); }
+.check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.check-list li { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; background: #0f0e10; border: 1px solid #2c2a2d; border-radius: 8px; font-size: 15px; }
+.check-list li.ok { border-color: #1f5a37; } .check-list li.bad { border-color: #ff7a7d; background: #2a1213; }
+.check-mark { font-weight: 900; text-align: center; } .check-list li.ok .check-mark { color: #3ecf7a; } .check-list li.bad .check-mark { color: #ff7a7d; }
+.check-detail { color: #8f8a83; font-size: 13px; }
+.pub-tab-join { display: grid; place-items: center; min-height: 50px; padding: 0 6px; background: var(--dk-red, #e10600); color: #fff; font-weight: 800; font-size: 14px; text-decoration: none; text-align: center; line-height: 1.15; }
+.pub-tab-join:focus-visible { outline: 2px solid var(--dk-yellow); outline-offset: -3px; }
+@media (max-width: 420px) { .pub-tab-join { font-size: 12px; } }
+
+/* customers' area by ID: best lap, ride history */
+.join-min { display: grid; gap: 8px; }
+.join-chip { flex: 1; min-height: 52px; font-size: 18px; background: #0f0e10; color: #f2efe9; border-color: #2c2a2d; }
+.join-chip.sel { background: #1d1a10; }
+.join-hist-btn { font-size: 17px; }
+.my-best { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-radius: 10px; background: linear-gradient(90deg, #2a0d0e, #1d1a10); border: 1px solid var(--dk-yellow, #ffd400); }
+.my-best span { font-size: 17px; font-weight: 700; } .my-best b { font-size: 34px; font-weight: 900; color: var(--dk-yellow, #ffd400); font-variant-numeric: tabular-nums; }
+.my-h2 { margin: 6px 0 0; font-size: 19px; }
+.my-rides { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.my-rides li { display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center; padding: 10px 12px; background: #0f0e10; border: 1px solid #2c2a2d; border-radius: 8px; }
+.my-rides li.pb { border-color: var(--dk-yellow, #ffd400); }
+.my-rides li > div { display: grid; gap: 2px; min-width: 0; }
+.my-rides span { color: #8f8a83; font-size: 12.5px; }
+.mr-when b { font-size: 15px; } .mr-what b { font-size: 15px; } .mr-what span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-pos { text-align: center; } .mr-pos b { font-size: 20px; }
+.mr-best { text-align: end; } .mr-best b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.my-rides li.pb .mr-best span { color: var(--dk-yellow, #ffd400); font-weight: 700; }
