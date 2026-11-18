@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as L from '../src/logic';
 import * as R from '../src/rentix';
+import { boardOf } from '../src/cloud';
 
 // Tiny counted harness: each test() is one named case; the run fails (exit 1) on any failure.
 let passed = 0; const failed: string[] = [];
@@ -609,6 +610,18 @@ test('personal area status: pending -> waiting/queued -> called -> racing -> don
     c = L.addCheckins(L.initialCore(), [{ id: 5, at: new Date(0).toISOString(), names: ['x'], minutes: 10 }]);
     c = L.cancelSubmission(c, L.pendingOf(c)[0].id);
     assert.equal(L.myStatus(c, [], 5).kind, 'cancelled');
+});
+
+test('public board: no staff notes, no names of unpaid registrations, check-ins keep only id + status', () => {
+    let c = L.addGroup(L.initialCore(), { name: 'קבוצה', size: 2, ticket: 'רגיל', keepTogether: true, note: 'לקוח עצבני' }, 1);
+    c = L.submitForm(c, 'טופס', ['סוד אחד'], 2).core;
+    c = L.addCheckins(c, [{ id: 3, at: new Date(5).toISOString(), phone: '0521234567', tz_tail: '094', names: ['שם פרטי'], minutes: 10 }]);
+    const b = boardOf(c, 10);
+    const txt = JSON.stringify(b);
+    assert.ok(!txt.includes('לקוח עצבני'), 'staff note leaked');
+    assert.ok(!txt.includes('סוד אחד') && !txt.includes('שם פרטי'), 'unpaid names leaked');
+    assert.ok(!txt.includes('0521234567') && !txt.includes('"094"'), 'phone / id digits leaked');
+    assert.equal(b.core.submissions!.length, 1); assert.equal(b.core.submissions![0].checkinId, 3);
 });
 
 test('RentiX-style sections: finished track run -> real history result; kart info per kart', () => {

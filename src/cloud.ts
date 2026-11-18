@@ -26,7 +26,9 @@ export function boardOf(core: L.Core, now: number, hist: L.Result[] = [], ext: E
     // Phone check-ins keep only their number, status and groups (no names), so the customer's personal area can follow them.
     const subs = (core.submissions ?? []).filter(x => x.checkinId != null)
         .map(x => ({ id: x.id, groupName: '', names: [], createdAt: 0, status: x.status, checkinId: x.checkinId, ...(x.groupIds ? { groupIds: x.groupIds } : {}), ...(x.groupId ? { groupId: x.groupId } : {}) }));
-    return { core: { ...rest, submissions: subs }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
+    // Staff notes never leave the staff computers.
+    const groups = rest.groups.map(g => ({ ...g, note: '' }));
+    return { core: { ...rest, groups, submissions: subs }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
 }
 
 export async function publishBoard(payload: BoardPayload): Promise<string | null> {
@@ -119,49 +121,9 @@ export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void
     return () => { void supabase.removeChannel(ch); };
 }
 
-// ---------------------------------------------------------------- phone check-in (?join, docs/checkin.sql)
-// The public page never reads customer data directly: it calls two database functions that return only short names.
-export const phoneDigits = (p: string) => p.replace(/\D/g, '');
-export const validPhone = (p: string) => /^0\d{8,9}$/.test(phoneDigits(p));
+// ---------------------------------------------------------------- customer check-in (?join, docs/checkin-id.sql + docs/security.sql)
 export type CheckinRow = { id: number; at: string; phone?: string; tz_tail?: string | null; names: string[]; minutes: number };
 
-/** Saved short names for this phone ([] = new customer); 'code' = an SMS code is needed first; null = cloud not reachable. */
-export async function checkinLookup(phone: string, token?: string): Promise<string[] | 'code' | null> {
-    const { data, error } = await supabase.rpc('checkin_lookup', { p_phone: phoneDigits(phone), ...(token ? { p_token: token } : {}) });
-    if (error) return (error.message || '').includes('need code') ? 'code' : null;
-    return Array.isArray(data) ? (data as string[]) : [];
-}
-/** Sends an SMS code. 'sent', 'off' (SMS not set up: no code needed) or an error (Hebrew). */
-export async function checkinSendCode(phone: string): Promise<'sent' | 'off' | { error: string }> {
-    const { data, error } = await supabase.rpc('checkin_send_code', { p_phone: phoneDigits(phone) });
-    if (!error) return data === 'off' ? 'off' : 'sent';
-    const m = error.message || '';
-    if (m.includes('wait')) return { error: 'כבר שלחנו קוד. אפשר לבקש שוב בעוד דקה.' };
-    if (m.includes('bad phone')) return { error: 'צריך מספר נייד (05X)' };
-    if (m.includes('busy')) return { error: 'יש עומס כרגע. פנו לקופה.' };
-    return { error: 'לא הצלחנו לשלוח קוד. נסו שוב או פנו לקופה.' };
-}
-/** Checks the code. Returns a pass for this phone (kept for the day), or an error (Hebrew). */
-export async function checkinVerify(phone: string, code: string): Promise<{ token: string } | { error: string }> {
-    const { data, error } = await supabase.rpc('checkin_verify', { p_phone: phoneDigits(phone), p_code: code.replace(/\D/g, '') });
-    if (!error && typeof data === 'string') return { token: data };
-    const m = error?.message || '';
-    if (m.includes('wrong')) return { error: 'הקוד לא נכון. נסו שוב.' };
-    if (m.includes('expired')) return { error: 'הקוד פג תוקף. בקשו קוד חדש.' };
-    return { error: 'לא הצלחנו לבדוק את הקוד. נסו שוב.' };
-}
-/** pick = 1-based positions of saved names that are coming; fresh = names typed now. Returns an error (Hebrew) or null. */
-export async function checkinSubmit(phone: string, pick: number[], fresh: string[], minutes: number, token?: string): Promise<string | null> {
-    const { error } = await supabase.rpc('checkin_submit', { p_phone: phoneDigits(phone), p_pick: pick, p_new: fresh, p_minutes: minutes, ...(token ? { p_token: token } : {}) });
-    if (!error) return null;
-    const m = error.message || '';
-    if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
-    if (m.includes('bad phone')) return 'מספר הטלפון לא תקין';
-    if (m.includes('no names')) return 'צריך לפחות שם אחד';
-    if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
-    if (m.includes('need code')) return 'צריך לאמת את הטלפון עם קוד. חזרו להתחלה.';
-    return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
-}
 // ---- ID number (ת"ז) check-in: the number goes to the database functions only; they keep a salted fingerprint, never the number.
 /** Israeli ID check digit (9 digits, shorter numbers padded with zeros). */
 export function validTz(raw: string): boolean {
@@ -186,9 +148,16 @@ export async function checkinSubmitId(tz: string, pick: number[], fresh: string[
     const m = error.message || '';
     if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
     if (m.includes('bad id')) return 'מספר תעודת הזהות לא תקין';
+    if (m.includes('busy')) return 'יש עומס כרגע. נסו שוב בעוד דקה או פנו לקופה.';
     if (m.includes('no names')) return 'צריך לפחות שם אחד';
     if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
     return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
+}
+/** Is the signed-in account on the staff list? null = could not check (offline, or docs/security.sql not run yet). */
+export async function amStaff(): Promise<boolean | null> {
+    const { data, error } = await supabase.rpc('is_staff');
+    if (error) return null;
+    return data === true;
 }
 /** Staff: takes all open check-ins once (null = table not set up yet or offline). */
 export async function checkinClaim(): Promise<CheckinRow[] | null> {

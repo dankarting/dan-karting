@@ -144,10 +144,11 @@ export function JoinQr({ size = 220 }: { size?: number }) {
 /** Printable counter sign: open in a new window and print. */
 export function printJoinSign() {
     const w = window.open('', '_blank'); if (!w) return;
+    const esc = (x: string) => x.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
     const q = qrcode(0, 'M'); q.addData(joinUrl()); q.make();
     w.document.write(`<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>הרשמה למקצה</title>
 <style>body{font-family:system-ui,Arial,sans-serif;text-align:center;margin:40px;color:#111}h1{font-size:54px;margin:0 0 8px}p{font-size:26px;margin:8px 0}.qr img{width:420px;height:420px;image-rendering:pixelated}.u{font-size:16px;color:#555;direction:ltr}</style></head>
-<body><h1>נרשמים כאן 🏁</h1><p>סרקו עם המצלמה, הקלידו טלפון, וגשו לקופה</p><div class="qr">${q.createImgTag(10, 20)}</div><p class="u">${joinUrl()}</p>
+<body><h1>נרשמים כאן 🏁</h1><p>סרקו עם המצלמה, הקלידו טלפון, וגשו לקופה</p><div class="qr">${q.createImgTag(10, 20)}</div><p class="u">${esc(joinUrl())}</p>
 <script>setTimeout(function(){window.print()},400)</script></body></html>`);
     w.document.close();
 }

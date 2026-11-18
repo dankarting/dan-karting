@@ -10,9 +10,8 @@ import { JoinQr, joinUrl, printJoinSign } from './Join';
 function legacy<T>(k: string): T | null { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) as T : null; } catch { return null; } }
 import type { Session } from '@supabase/supabase-js';
 
-type Tab = 'form' | 'cashier' | 'heats' | 'live' | 'history' | 'settings';
+type Tab = 'cashier' | 'heats' | 'live' | 'history' | 'settings';
 const TABS: { id: Tab; label: string }[] = [
-    { id: 'form', label: 'הרשמה' },
     { id: 'cashier', label: 'קופה' },
     { id: 'heats', label: 'מקצים' },
     { id: 'live', label: 'חי' },
@@ -127,57 +126,6 @@ function NameRows({ core, rows, setRows, minutes, onEdit }: { core: L.Core; rows
         </ol>
         <div className="actions"><Btn small disabled={rows.length >= L.MAX_FORM_NAMES} onClick={() => setRows([...rows, { name: '', ticket: def }])}>+ משתתף</Btn></div>
     </>;
-}
-
-function CustomerForm({ core, update }: { core: L.Core; update: Update }) {
-    const [group, setGroup] = useState('');
-    const def = core.settings.tickets[0] ?? '';
-    const blank = (): FormRow[] => [{ name: '', ticket: def }, { name: '', ticket: def }];
-    const [rows, setRows] = useState<FormRow[]>(blank);
-    const [minutes, setMinutes] = useState(10);
-    const [error, setError] = useState('');
-    const [sent, setSent] = useState<{ id: string; group: string; n: number; tickets: string[]; minutes: number } | null>(null);
-    const names = rows.map(r => r.name);
-    const tix = rows.map(r => r.ticket);
-    const chosen = rows.filter(r => r.name.trim()).map(r => r.ticket);
-    const filled = chosen.length;
-    const submit = () => {
-        let res: { id?: string; error?: string } = {};
-        update(c => { const r = L.submitForm(c, group, names, Date.now(), tix, minutes); res = r; return r.core; });
-        if (res.error || !res.id) { setError(res.error ?? 'שגיאה'); return; }
-        setSent({ id: res.id, group: group.trim(), n: filled, tickets: chosen, minutes }); setGroup(''); setRows(blank()); setMinutes(10); setError('');
-    };
-    const sample = () => {
-        const k = Math.floor(Math.random() * 20);
-        setGroup(`קבוצה לדוגמה ${k + 1}`);
-        const n = 3 + (k % 4);
-        setRows(Array.from({ length: n }, (_, i) => ({ name: L.DEMO_NAMES[(k + i * 7) % L.DEMO_NAMES.length], ticket: def })));
-    };
-    if (sent) return <Group label="נשלח לקופה" heading>
-        <div className="sent">
-            <div className="sent-num">#{sent.id.replace(/\D/g, '')}</div>
-            <p><b>{sent.group}</b> · {sent.n} משתתפים · {sent.minutes} דקות</p>
-            <PriceLine core={core} tickets={sent.tickets} minutes={sent.minutes} />
-            <p>ההרשמה מחכה בקופה. גשו לקופה לתשלום. אחרי אישור התשלום תיכנסו לתור ותוזמנו במסך המסלול.</p>
-        </div>
-        <Btn kind="primary" onClick={() => setSent(null)}>הרשמה חדשה</Btn>
-    </Group>;
-    return <Group label="הרשמה לקארטינג" heading>
-        <Callout title="דמו" tone="warning">זה טופס לדוגמה. אל תזינו שמות אמיתיים. ליד כל שם בוחרים כרטיס. ליגה ומאסטר ⚡ הן מכוניות מהירות. בזוגי יושבים שניים ברכב אחד, אז נפתחת שורה לשם השני. אין תשלום בטופס: משלמים בקופה.</Callout>
-        <div className="form">
-            <label className="field"><span className="flabel">שם הקבוצה</span>
-                <input className="inp" value={group} onChange={e => { setError(''); setGroup(e.target.value); }} placeholder="למשל: החבר׳ה מהעבודה" maxLength={40} />
-            </label>
-            <div className="field"><span className="flabel">אורך המקצה</span><MinuteChips value={minutes} onChange={setMinutes} /></div>
-            <div className="field"><span className="flabel">שמות המשתתפים ({filled})</span>
-                <NameRows core={core} rows={rows} setRows={setRows} minutes={minutes} onEdit={() => setError('')} />
-                <div className="actions"><Btn small onClick={sample}>מלא דוגמה</Btn></div>
-            </div>
-            <PriceLine core={core} tickets={chosen.length ? chosen : rows.map(r => r.ticket)} minutes={minutes} />
-            {error && <div className="warn" role="alert">{error}</div>}
-            <Btn kind="primary" onClick={submit}>שליחה לקופה</Btn>
-        </div>
-    </Group>;
 }
 
 /** Small label: ticket type, fast-kart class, family. */
@@ -1244,13 +1192,12 @@ export function App() {
 
     return <FileCard lang="he">
         <div className="dk">
-            <div className="brandbar"><Logo /><span className="brand-tag">דמו · נתוני דמה</span><span className={`brand-tag sync-tag ${syncSt}`} title={SYNC_TEXT[syncSt]}>{SYNC_SHORT[syncSt]}</span>{sending && <span className="brand-tag onair-tag">● משדר לאתר</span>}{rx.up && <span className={`brand-tag rx-tag${rx.connected ? '' : ' bad'}`} title={rx.error}>{rx.connected ? (extNow ? `● ${R.sourceName(rx.source)} · ${extNow.run || 'מקצה'}` : `● ${R.sourceName(rx.source)} מחובר`) : '⚠ אין חיבור ל-RentiX או לדקודר'}</span>}{core.live && <button type="button" className="onair" onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} על המסלול</button>}</div>
+            <div className="brandbar"><Logo /><span className={`brand-tag sync-tag ${syncSt}`} title={SYNC_TEXT[syncSt]}>{SYNC_SHORT[syncSt]}</span>{sending && <span className="brand-tag onair-tag">● משדר לאתר</span>}{rx.up && <span className={`brand-tag rx-tag${rx.connected ? '' : ' bad'}`} title={rx.error}>{rx.connected ? (extNow ? `● ${R.sourceName(rx.source)} · ${extNow.run || 'מקצה'}` : `● ${R.sourceName(rx.source)} מחובר`) : '⚠ אין חיבור ל-RentiX או לדקודר'}</span>}{core.live && <button type="button" className="onair" onClick={() => setTab('live')}>● מקצה {L.runningHeat(core)?.num} על המסלול</button>}</div>
             <Header title="מקצים ותור" fact="גרסת דמו · נתוני דמה" intro="קופה, שיבוץ מקצים, תור פשוט, קריאה למסלול וזמנים מדומים. אפשר לשדר את לוח הזמנים לאתר ציבורי (הגדרות). אין חיבור לשעון של העסק." />
             <nav className="tabs" aria-label="מסכים">
                 {TABS.map(t => <button key={t.id} type="button" className={tab === t.id ? 'on' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}>{t.label}{t.id === 'live' && core.live ? <i className="live-dot" aria-label="מקצה על המסלול">●</i> : counts[t.id] ? <i>{counts[t.id]}</i> : null}</button>)}
             </nav>
             {!ready && <p className="empty">טוען נתונים שמורים…</p>}
-            {ready && tab === 'form' && <CustomerForm core={core} update={update} />}
             {ready && tab === 'cashier' && <Cashier core={core} update={update} goHeats={goHeats} />}
             {ready && tab === 'heats' && <Heats core={core} update={update} />}
             {ready && tab === 'live' && <Live rx={rx} core={core} update={update} now={now} hist={hist} auto={auto} setAuto={setAuto} openScreen={setScreen} save={save} start={start} cancel={cancel} goHeats={goHeats} quickStart={quickStart} />}
@@ -1284,6 +1231,7 @@ export function PublicBoard() {
     const hist = board.hist ?? [];
     const nav = <nav className="pub-tabs" aria-label="לשוניות">
         {PUB_TABS.map(([id, label]) => <button key={id} type="button" className={tab === id ? 'on' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}{id === 'results' && hist.length ? <i>{hist.length}</i> : null}</button>)}
+        <a className="pub-tab-join" href="?join">הרשמה / האזור שלי</a>
     </nav>;
     if (tab !== 'live') return <div className="dk pub-hist">
         <div className="pub-hist-top"><Logo /><span className={`pub-conn static ${conn === 'SUBSCRIBED' ? 'ok' : ''}`}>{conn === 'SUBSCRIBED' ? '● שידור חי' : 'מתחבר…'}</span></div>
@@ -1343,7 +1291,19 @@ function StaffLoginForm({ onDone }: { onDone?: () => void }) {
 export function StaffGate({ children }: { children: React.ReactNode }) {
     const [session, setSession] = useState<Session | null | undefined>(undefined);
     useEffect(() => Cloud.onSession(setSession), []);
-    if (session === undefined) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    // Signed in is not enough: the account must be on the staff list (docs/security.sql). The database enforces this too;
+    // this only shows a clear message instead of an empty app. null = could not check (offline / SQL not run): let in.
+    const [staff, setStaff] = useState<boolean | null | undefined>(undefined);
+    const uid = session?.user.id;
+    useEffect(() => { if (!uid) { setStaff(undefined); return; } let live = true; void Cloud.amStaff().then(v => { if (live) setStaff(v); }); return () => { live = false; }; }, [uid]);
+    if (session === undefined || (session && staff === undefined)) return <div className="dk pub-wait"><Logo big /><p>טוען…</p></div>;
+    if (session && staff === false) return <div className="dk pub-wait">
+        <Logo big />
+        <h1 className="gate-title">החשבון הזה אינו חשבון צוות</h1>
+        <p>אזור הצוות פתוח רק לעובדים.</p>
+        <button type="button" className="kb primary" onClick={() => void Cloud.signOut()}>התנתקות</button>
+        <a className="pub-staff" href="./">למסך הצופים</a>
+    </div>;
     if (session) return <>{children}</>;
     return <div className="dk pub-wait">
         <Logo big />
