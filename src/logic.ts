@@ -1034,6 +1034,39 @@ export function addCheckins(core: Core, rows: { id: number; at: string; phone?: 
     return c;
 }
 
+/** Where a customer who checked in from their phone stands now (personal area on ?join). Works on the public board copy. */
+export type MyStatus = {
+    kind: 'pending' | 'cancelled' | 'waiting' | 'queued' | 'called' | 'racing' | 'done';
+    heatNum?: number; kart?: number; label?: string;
+    /** Heats in the queue before this one. */
+    ahead?: number;
+    result?: { pos: number; of: number; best: number | null; laps: number };
+};
+export function myStatus(core: Core, hist: Result[], checkinId: number): MyStatus {
+    const sub = (core.submissions ?? []).find(s => s.checkinId === checkinId);
+    if (!sub || sub.status === 'pending') return { kind: 'pending' };
+    if (sub.status === 'cancelled') return { kind: 'cancelled' };
+    const gids = sub.groupIds ?? (sub.groupId ? [sub.groupId] : []);
+    const mine = core.heats.filter(h => h.entries.some(e => gids.includes(e.groupId))).sort((a, b) => a.num - b.num);
+    const open = mine.find(h => h.status !== 'done');
+    const h = open ?? mine[mine.length - 1];
+    if (!h) {
+        return { kind: 'waiting' };
+    }
+    const d = driversOf(core, h).find(x => gids.includes(x.groupId));
+    const base = { heatNum: h.num, kart: d?.kart, label: d?.label };
+    if (h.status === 'draft') return { kind: 'waiting' };
+    if (h.status === 'done' || (!open && h)) {
+        const res = hist.find(r => r.heatId === h.id);
+        const row = res?.rows.find(r => (d && r.label === d.label) || (d && r.kart === d.kart));
+        return { kind: 'done', ...base, ...(res && row ? { result: { pos: row.pos, of: res.rows.length, best: row.best, laps: row.laps.length } } : {}) };
+    }
+    if (core.live?.heatId === h.id) return { kind: 'racing', ...base };
+    if (h.called) return { kind: 'called', ...base };
+    const q = queueOf(core);
+    return { kind: 'queued', ...base, ahead: Math.max(0, q.findIndex(x => x.id === h.id)) };
+}
+
 /** Drop a pending submission (customer left, duplicate...). Paid ones are handled as groups. */
 export const cancelSubmission = (core: Core, subId: string): Core => ({
     ...core,

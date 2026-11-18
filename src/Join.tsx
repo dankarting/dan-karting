@@ -4,6 +4,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import qrcode from 'qrcode-generator';
 import * as Cloud from './cloud';
+import * as L from './logic';
+
+// The customer's own check-in on this phone, kept for the day: reopening ?join shows the personal area.
+const ME_KEY = 'dankart.join.me.v1';
+type Me = { cid: number; name: string; until: number };
+function readMe(): Me | null { try { const m = JSON.parse(localStorage.getItem(ME_KEY) || 'null') as Me | null; return m && m.until > Date.now() ? m : null; } catch { return null; } }
+function saveMe(m: Me | null) { try { if (m) localStorage.setItem(ME_KEY, JSON.stringify(m)); else localStorage.removeItem(ME_KEY); } catch { /* memory only */ } }
 
 const LOGO_SRC = 'dan-karting-logo.jpg';
 function JoinLogo() {
@@ -11,10 +18,11 @@ function JoinLogo() {
     return ok ? <img className="join-logo" src={LOGO_SRC} alt="Dan Karting" onError={() => setOk(false)} /> : <div className="join-word">DAN KARTING</div>;
 }
 
-type Step = 'id' | 'who' | 'done';
+type Step = 'id' | 'who' | 'me';
 
 export function JoinPage() {
-    const [step, setStep] = useState<Step>('id');
+    const [me, setMe] = useState<Me | null>(() => readMe());
+    const [step, setStep] = useState<Step>(() => (readMe() ? 'me' : 'id'));
     const [tz, setTz] = useState('');
     const [saved, setSaved] = useState<string[]>([]);
     const [pick, setPick] = useState<boolean[]>([]);
@@ -27,8 +35,6 @@ export function JoinPage() {
     useEffect(() => { idRef.current?.focus(); }, []);
 
     const reset = () => { setStep('id'); setTz(''); setSaved([]); setPick([]); setFresh(['']); setMinutes(10); setErr(''); setSent([]); };
-    // After "done", go back to the start by itself so the next customer at a shared tablet starts clean.
-    useEffect(() => { if (step !== 'done') return; const t = setTimeout(reset, 45_000); return () => clearTimeout(t); }, [step]);
 
     const next = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -46,8 +52,9 @@ export function JoinPage() {
         setBusy(true); setErr('');
         const m = await Cloud.checkinSubmitId(tz, pick.map((p, i) => (p ? i + 1 : 0)).filter(Boolean), typed, minutes);
         setBusy(false);
-        if (m) { setErr(m); return; }
-        setSent(coming); setStep('done');
+        if (typeof m === 'string') { setErr(m); return; }
+        const mine = { cid: m.id, name: coming[0], until: Date.now() + 12 * 3600_000 };
+        saveMe(mine); setMe(mine); setSent(coming); setStep('me');
     };
 
     return <div className="dk join" dir="rtl">
@@ -78,14 +85,46 @@ export function JoinPage() {
             <button type="button" className="kb ghost sm" onClick={reset}>{saved.length ? 'זה לא אני' : 'חזרה'}</button>
         </div>}
 
-        {step === 'done' && <div className="join-card join-done">
-            <div className="join-check" aria-hidden="true">✓</div>
-            <h1>נרשמתם!</h1>
-            <p className="join-names">{sent.join(' · ')}</p>
-            <p className="join-sub">גשו לקופה לתשלום. אחרי התשלום תיכנסו לתור, והשם שלכם יופיע במסך כשתקראו למסלול.</p>
-            <button type="button" className="kb join-go" onClick={reset}>הרשמה נוספת</button>
-        </div>}
+        {step === 'me' && me && <MyArea me={me} fresh={sent.length > 0} onLeave={() => { saveMe(null); setMe(null); reset(); }} />}
     </div>;
+}
+
+const fmtLap = (ms: number | null) => (ms == null ? '—' : L.fmt(ms));
+
+/** Personal area: where I stand now (follows the public board live), then a way to the customers' area. */
+function MyArea({ me, fresh, onLeave }: { me: Me; fresh: boolean; onLeave: () => void }) {
+    const [board, setBoard] = useState<Cloud.BoardPayload | null>(null);
+    useEffect(() => { void Cloud.fetchBoard().then(p => { if (p) setBoard(p); }); return Cloud.subscribeBoard(setBoard); }, []);
+    const st = board ? L.myStatus(board.core, board.hist ?? [], me.cid) : null;
+    const first = me.name.split(' ')[0];
+    const view: Record<L.MyStatus['kind'], { icon: string; title: string; sub: string; tone: string }> = {
+        pending: { icon: '💳', title: 'ממתינים לתשלום', sub: 'גשו לקופה. אחרי התשלום תיכנסו לתור למקצה.', tone: 'wait' },
+        cancelled: { icon: '✕', title: 'ההרשמה בוטלה', sub: 'אם זו טעות, פנו לקופה.', tone: 'bad' },
+        waiting: { icon: '✓', title: 'שולם!', sub: 'אנחנו משבצים אתכם למקצה. מספר המקצה יופיע כאן.', tone: 'ok' },
+        queued: { icon: '⏳', title: st?.heatNum ? `מקצה ${st.heatNum}` : 'בתור', sub: st?.ahead ? `לפניכם ${st.ahead === 1 ? 'מקצה אחד' : `${st.ahead} מקצים`}. תישארו קרוב.` : 'אתם הבאים בתור! תתכוננו.', tone: 'ok' },
+        called: { icon: '📣', title: `מקצה ${st?.heatNum ?? ''}: גשו למסלול!`, sub: 'קוראים לכם עכשיו. גשו לנקודת העלייה.', tone: 'call' },
+        racing: { icon: '🏁', title: 'אתם על המסלול!', sub: 'הזמנים מופיעים בלוח החי.', tone: 'call' },
+        done: { icon: '🏆', title: 'סיימתם!', sub: 'התוצאות שלכם:', tone: 'ok' },
+    };
+    const v = st ? view[st.kind] : null;
+    return <>
+        {fresh && <div className="join-toast">✓ נרשמתם! גשו לקופה לתשלום.</div>}
+        <div className="join-card">
+            <h1>האזור שלי</h1>
+            <p className="join-names">{me.name}</p>
+            {!v ? <p className="join-sub">טוען…</p> : <div className={`my-status ${v.tone}`}>
+                <div className="my-icon" aria-hidden="true">{v.icon}</div>
+                <div><div className="my-title">{v.title}</div><div className="my-sub">{v.sub}</div></div>
+            </div>}
+            {st && st.kart != null && st.kind !== 'pending' && st.kind !== 'waiting' && <div className="my-facts">
+                {st.heatNum != null && <div><span>מקצה</span><b>{st.heatNum}</b></div>}
+                {st.kind !== 'queued' && <div><span>קארט</span><b>{st.kart}</b></div>}
+                {st.result && <><div><span>מקום</span><b>{st.result.pos}/{st.result.of}</b></div><div><span>הקפה מהירה</span><b dir="ltr">{fmtLap(st.result.best)}</b></div></>}
+            </div>}
+            <a className="kb primary join-go join-a" href="./">לאזור הלקוחות: לוח חי ותוצאות</a>
+            <button type="button" className="join-link" onClick={onLeave}>{first ? `לא ${first}? ` : ''}הרשמה חדשה</button>
+        </div>
+    </>;
 }
 
 /** The check-in address (same site, ?join). */

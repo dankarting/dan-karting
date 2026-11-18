@@ -487,8 +487,6 @@ test('quick start: open heat with no registration, karts appear as they cross, c
     assert.deepEqual(L.queueOf(c).map(x => x.id), L.queueOf(twoQueued()).map(x => x.id), 'the queue is untouched');
 });
 
-console.log(`\n${passed} passed, ${failed.length} failed`);
-if (failed.length) process.exit(1);
 
 test('10- and 20-minute groups never share a heat', () => {
     let c = L.initialCore();
@@ -591,6 +589,28 @@ test('phone check-in -> pending at the cashier, once per check-in id, then paid 
     assert.equal(c.groups[0].minutes, 20);
 });
 
+test('personal area status: pending -> waiting/queued -> called -> racing -> done with result', () => {
+    let c = L.addCheckins(L.initialCore(), [{ id: 41, at: new Date(1000).toISOString(), phone: '', tz_tail: '094', names: ['נאור'], minutes: 10 }]);
+    assert.equal(L.myStatus(c, [], 41).kind, 'pending');
+    assert.equal(L.myStatus(c, [], 99).kind, 'pending', 'not picked up yet');
+    c = L.markPaidAndPlan(c, L.pendingOf(c)[0].id, 2000);
+    assert.equal(L.myStatus(c, [], 41).kind, 'waiting', 'draft heat');
+    const h = c.heats[0];
+    c = L.approveHeat(c, h.id);
+    const q = L.myStatus(c, [], 41);
+    assert.equal(q.kind, 'queued'); assert.equal(q.heatNum, h.num); assert.equal(q.ahead, 0); assert.equal(q.label, 'נאור'); assert.ok(q.kart! > 0);
+    c = L.callHeat(c, h.id);
+    assert.equal(L.myStatus(c, [], 41).kind, 'called');
+    c = L.startHeat(c, h.id, 10_000, 1, 20);
+    assert.equal(L.myStatus(c, [], 41).kind, 'racing');
+    const fin = L.finishRun(c, 10_000 + 20 * 60_000);
+    const d = L.myStatus(fin.core, fin.result ? [fin.result] : [], 41);
+    assert.equal(d.kind, 'done'); assert.ok(d.result && d.result.pos >= 1 && d.result.of >= 1);
+    c = L.addCheckins(L.initialCore(), [{ id: 5, at: new Date(0).toISOString(), names: ['x'], minutes: 10 }]);
+    c = L.cancelSubmission(c, L.pendingOf(c)[0].id);
+    assert.equal(L.myStatus(c, [], 5).kind, 'cancelled');
+});
+
 test('RentiX-style sections: finished track run -> real history result; kart info per kart', () => {
     const lines = ['$I,"21:00:00.000","x"', '$B,12,"Heat 12"', '$F,0,"00:00:00","21:10:00","00:10:00.000","Finish"',
         '$A,"5","5",111,"Kart","5","",1', '$A,"7","7",222,"Kart","7","",1',
@@ -611,3 +631,6 @@ test('RentiX-style sections: finished track run -> real history result; kart inf
     assert.equal(ks[1].kart, 7); assert.equal(ks[1].best, 27_960);
     assert.equal(L.resultTitle({ ...res, title: undefined }), 'מקצה 12');
 });
+
+console.log(`\n${passed} passed, ${failed.length} failed`);
+if (failed.length) process.exit(1);

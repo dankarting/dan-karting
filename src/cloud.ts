@@ -23,7 +23,10 @@ export type BoardPayload = { core: L.Core; sentAt: number; hist?: L.Result[]; ex
 export const PUBLIC_HISTORY = 150;
 export function boardOf(core: L.Core, now: number, hist: L.Result[] = [], ext: ExtBoard | null = null): BoardPayload {
     const { submissions: _unpaid, ...rest } = core;
-    return { core: { ...rest, submissions: [] }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
+    // Phone check-ins keep only their number, status and groups (no names), so the customer's personal area can follow them.
+    const subs = (core.submissions ?? []).filter(x => x.checkinId != null)
+        .map(x => ({ id: x.id, groupName: '', names: [], createdAt: 0, status: x.status, checkinId: x.checkinId, ...(x.groupIds ? { groupIds: x.groupIds } : {}), ...(x.groupId ? { groupId: x.groupId } : {}) }));
+    return { core: { ...rest, submissions: subs }, sentAt: now, hist: hist.slice(0, PUBLIC_HISTORY), ext };
 }
 
 export async function publishBoard(payload: BoardPayload): Promise<string | null> {
@@ -177,9 +180,9 @@ export async function checkinLookupId(tz: string): Promise<string[] | null> {
     if (error) return null;
     return Array.isArray(data) ? (data as string[]) : [];
 }
-export async function checkinSubmitId(tz: string, pick: number[], fresh: string[], minutes: number): Promise<string | null> {
-    const { error } = await supabase.rpc('checkin_submit_id', { p_tz: tzOf(tz), p_pick: pick, p_new: fresh, p_minutes: minutes });
-    if (!error) return null;
+export async function checkinSubmitId(tz: string, pick: number[], fresh: string[], minutes: number): Promise<{ id: number } | string> {
+    const { data, error } = await supabase.rpc('checkin_submit_id', { p_tz: tzOf(tz), p_pick: pick, p_new: fresh, p_minutes: minutes });
+    if (!error) return { id: Number(data) };
     const m = error.message || '';
     if (m.includes('too soon')) return 'כבר נרשמתם עכשיו. גשו לקופה.';
     if (m.includes('bad id')) return 'מספר תעודת הזהות לא תקין';
