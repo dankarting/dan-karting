@@ -11,7 +11,16 @@ function JoinLogo() {
     return ok ? <img className="join-logo" src={LOGO_SRC} alt="Dan Karting" onError={() => setOk(false)} /> : <div className="join-word">DAN KARTING</div>;
 }
 
-type Step = 'phone' | 'who' | 'done';
+type Step = 'phone' | 'code' | 'who' | 'done';
+
+// A verified phone keeps its pass on this device for the day, so a returning customer is not asked for a code again.
+const PASS_KEY = 'dankart.join.pass.v1';
+type Passes = Record<string, { token: string; until: number }>;
+function readPasses(): Passes { try { return JSON.parse(localStorage.getItem(PASS_KEY) || '{}') as Passes; } catch { return {}; } }
+function passFor(phone: string): string | undefined { const p = readPasses()[Cloud.phoneDigits(phone)]; return p && p.until > Date.now() ? p.token : undefined; }
+function savePass(phone: string, token: string) {
+    try { const all = readPasses(); all[Cloud.phoneDigits(phone)] = { token, until: Date.now() + 11 * 3600_000 }; localStorage.setItem(PASS_KEY, JSON.stringify(all)); } catch { /* memory only */ }
+}
 
 export function JoinPage() {
     const [step, setStep] = useState<Step>('phone');
@@ -23,28 +32,55 @@ export function JoinPage() {
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
     const [sent, setSent] = useState<string[]>([]);
+    const [token, setToken] = useState<string | undefined>(undefined);
+    const [code, setCode] = useState('');
+    const [sentAt, setSentAt] = useState(0);
+    const [tick, setTick] = useState(0);
+    useEffect(() => { if (step !== 'code') return; const i = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(i); }, [step]);
     const phoneRef = useRef<HTMLInputElement>(null);
     useEffect(() => { phoneRef.current?.focus(); }, []);
 
-    const reset = () => { setStep('phone'); setPhone(''); setSaved([]); setPick([]); setFresh(['']); setMinutes(10); setErr(''); setSent([]); };
+    const reset = () => { setStep('phone'); setPhone(''); setSaved([]); setPick([]); setFresh(['']); setMinutes(10); setErr(''); setSent([]); setToken(undefined); setCode(''); setSentAt(0); };
     // After "done", go back to the start by itself so the next customer at a shared tablet starts clean.
     useEffect(() => { if (step !== 'done') return; const t = setTimeout(reset, 45_000); return () => clearTimeout(t); }, [step]);
 
+    const showWho = (names: string[]) => { setSaved(names); setPick(names.map((_, i) => i === 0)); setFresh(names.length ? [] : ['']); setStep('who'); };
+    const sendCode = async (): Promise<boolean> => {
+        const r = await Cloud.checkinSendCode(phone);
+        if (r === 'sent') { setSentAt(Date.now()); setCode(''); setStep('code'); return true; }
+        if (r === 'off') return false;
+        setErr(r.error); setStep('phone'); return true;
+    };
     const next = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!Cloud.validPhone(phone)) { setErr('מספר הטלפון לא תקין. למשל 0521234567'); return; }
         setBusy(true); setErr('');
-        const names = await Cloud.checkinLookup(phone);
+        const tok = passFor(phone);
+        const names = await Cloud.checkinLookup(phone, tok);
+        if (names === 'code') { await sendCode(); setBusy(false); return; }
         setBusy(false);
         if (names === null) { setErr('אין חיבור כרגע. נסו שוב או פנו לקופה.'); return; }
-        setSaved(names); setPick(names.map((_, i) => i === 0)); setFresh(names.length ? [] : ['']); setStep('who');
+        setToken(tok); showWho(names);
     };
+    const verify = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (code.replace(/\D/g, '').length !== 4) { setErr('הקוד הוא 4 ספרות'); return; }
+        setBusy(true); setErr('');
+        const r = await Cloud.checkinVerify(phone, code);
+        if ('error' in r) { setBusy(false); setErr(r.error); return; }
+        savePass(phone, r.token); setToken(r.token);
+        const names = await Cloud.checkinLookup(phone, r.token);
+        setBusy(false);
+        if (names === null || names === 'code') { setErr('אין חיבור כרגע. נסו שוב או פנו לקופה.'); return; }
+        showWho(names);
+    };
+    const wait = Math.max(0, 60 - Math.floor((Date.now() - sentAt) / 1000)); void tick;
     const typed = fresh.map(f => f.trim()).filter(Boolean);
     const coming = [...saved.filter((_, i) => pick[i]), ...typed];
     const submit = async () => {
         if (coming.length === 0) { setErr(saved.length ? 'סמנו מי מגיע או הוסיפו שם' : 'כתבו את השם שלכם'); return; }
         setBusy(true); setErr('');
-        const m = await Cloud.checkinSubmit(phone, pick.map((p, i) => (p ? i + 1 : 0)).filter(Boolean), typed, minutes);
+        const m = await Cloud.checkinSubmit(phone, pick.map((p, i) => (p ? i + 1 : 0)).filter(Boolean), typed, minutes, token);
         setBusy(false);
         if (m) { setErr(m); return; }
         setSent(coming); setStep('done');
@@ -61,6 +97,17 @@ export function JoinPage() {
             </label>
             {err && <p className="err" role="alert">{err}</p>}
             <button type="submit" className="kb primary join-go" disabled={busy}>{busy ? 'בודק…' : 'המשך'}</button>
+        </form>}
+
+        {step === 'code' && <form className="join-card" onSubmit={verify}>
+            <h1>קוד אימות</h1>
+            <p className="join-sub">שלחנו SMS עם 4 ספרות ל-<span dir="ltr">{phone}</span></p>
+            <input className="inp join-phone join-code" type="text" inputMode="numeric" autoComplete="one-time-code" dir="ltr" maxLength={4} placeholder="••••" autoFocus aria-label="קוד אימות"
+                value={code} onChange={e => { setErr(''); setCode(e.target.value.replace(/\D/g, '').slice(0, 4)); }} />
+            {err && <p className="err" role="alert">{err}</p>}
+            <button type="submit" className="kb primary join-go" disabled={busy}>{busy ? 'בודק…' : 'אישור'}</button>
+            <button type="button" className="kb ghost sm" disabled={busy || wait > 0} onClick={() => { setErr(''); void sendCode(); }}>{wait > 0 ? `שלח קוד שוב (${wait})` : 'שלח קוד שוב'}</button>
+            <button type="button" className="kb ghost sm" onClick={reset}>מספר אחר</button>
         </form>}
 
         {step === 'who' && <div className="join-card">

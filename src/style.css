@@ -638,3 +638,4 @@ body { background: #0b0b0c; }
 .join .err { color: #ff7a7d; margin: 0; }
 .join-sign { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .join-qr { border-radius: 6px; flex: none; }
+.join-code { letter-spacing: .5em; font-size: 32px; }
