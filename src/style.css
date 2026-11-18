@@ -664,3 +664,21 @@ body { background: #0b0b0c; }
 .pub-tab-join { display: grid; place-items: center; min-height: 50px; padding: 0 6px; background: var(--dk-red, #e10600); color: #fff; font-weight: 800; font-size: 14px; text-decoration: none; text-align: center; line-height: 1.15; }
 .pub-tab-join:focus-visible { outline: 2px solid var(--dk-yellow); outline-offset: -3px; }
 @media (max-width: 420px) { .pub-tab-join { font-size: 12px; } }
+
+/* customers' area by ID: best lap, ride history */
+.join-min { display: grid; gap: 8px; }
+.join-chip { flex: 1; min-height: 52px; font-size: 18px; background: #0f0e10; color: #f2efe9; border-color: #2c2a2d; }
+.join-chip.sel { background: #1d1a10; }
+.join-hist-btn { font-size: 17px; }
+.my-best { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-radius: 10px; background: linear-gradient(90deg, #2a0d0e, #1d1a10); border: 1px solid var(--dk-yellow, #ffd400); }
+.my-best span { font-size: 17px; font-weight: 700; } .my-best b { font-size: 34px; font-weight: 900; color: var(--dk-yellow, #ffd400); font-variant-numeric: tabular-nums; }
+.my-h2 { margin: 6px 0 0; font-size: 19px; }
+.my-rides { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.my-rides li { display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center; padding: 10px 12px; background: #0f0e10; border: 1px solid #2c2a2d; border-radius: 8px; }
+.my-rides li.pb { border-color: var(--dk-yellow, #ffd400); }
+.my-rides li > div { display: grid; gap: 2px; min-width: 0; }
+.my-rides span { color: #8f8a83; font-size: 12.5px; }
+.mr-when b { font-size: 15px; } .mr-what b { font-size: 15px; } .mr-what span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-pos { text-align: center; } .mr-pos b { font-size: 20px; }
+.mr-best { text-align: end; } .mr-best b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.my-rides li.pb .mr-best span { color: var(--dk-yellow, #ffd400); font-weight: 700; }

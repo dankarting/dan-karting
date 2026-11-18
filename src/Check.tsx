@@ -42,13 +42,21 @@ export function CheckPage() {
                 return { ok: !!error || !data || data.length === 0, detail: error ? 'נחסם' : 'לא שינה (0 שורות)' };
             } },
             noRead('staff_state'), noRead('checkins'), noRead('id_customers'), noRead('staff_users'),
-            noRead('checkin_secret'), noRead('checkin_rate'), noRead('checkin_sms'), noRead('checkin_codes'), noRead('drivers'),
+            noRead('checkin_secret'), noRead('checkin_rate'), noRead('checkin_sms'), noRead('checkin_codes'), noRead('drivers'), noRead('rides'),
             noCall('checkin_claim'), noCall('tz_hash', { t: '123456782' }), noCall('checkin_throttle', { p_kind: 'x', p_max: 1, p_window: '1 minute' }),
             noCall('checkin_lookup', { p_phone: '0500000000' }), noCall('checkin_submit', { p_phone: '0500000000', p_pick: [], p_new: ['x'], p_minutes: 10 }),
             noCall('checkin_send_code', { p_phone: '0500000000' }),
             { name: 'ת"ז לא תקינה נדחית', run: async () => {
                 const { error } = await anon.rpc('checkin_lookup_id', { p_tz: '123456789' });
                 return error ? { ok: true, detail: 'נדחה' } : { ok: false, detail: 'התקבל!' };
+            } },
+            { name: 'זר לא מוסיף נסיעה מזויפת', run: async () => {
+                const { error } = await anon.from('rides').insert({ id: `check-${Date.now()}`, id_hash: 'x', at: new Date().toISOString() });
+                return error ? { ok: true, detail: 'נחסם' } : { ok: false, detail: 'נוסף!' };
+            } },
+            { name: 'היסטוריה עם ת"ז לא תקינה נדחית', run: async () => {
+                const { error } = await anon.rpc('my_rides', { p_tz: '123456789' });
+                return error ? { ok: true, detail: error.message.includes('my_rides') ? 'my_rides חסר: צריך להריץ את rides.sql' : 'נדחה' } : { ok: false, detail: 'התקבל!' };
             } },
             { name: 'זר אינו צוות', run: async () => {
                 const { data, error } = await anon.rpc('is_staff');

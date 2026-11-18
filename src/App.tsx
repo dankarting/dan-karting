@@ -1144,7 +1144,7 @@ export function App() {
         let { result } = L.finishRun(c0, t);
         // a heat run over the real timing (quick start with the bridge) saves what the track timing measured
         if (h0 && e && R.extActive(e)) result = { ...R.extResult(e, t), heatNum: h0.num, title: `מקצה ${h0.num}`, minutes: c0.live?.durationMs ? Math.round(c0.live.durationMs / 60_000) : undefined };
-        if (result) { const res = result; updHist(h => L.trimHistory(L.mergeResults([res], h), L.SHARED_HISTORY_BYTES)); void Cloud.archiveHeats([res]); }
+        if (result) { const res = result; updHist(h => L.trimHistory(L.mergeResults([res], h), L.SHARED_HISTORY_BYTES)); void Cloud.archiveHeats([res]); void Cloud.saveRides(L.ridesOf(c0, h0, res)); }
         update(c => (c.live && c.live.heatId === h0?.id) || !result ? L.finishRun(c, t).core : c);
     };
     // quick start: real timing runs at real speed; the demo simulation keeps its usual speed

@@ -29,7 +29,9 @@ export type Submission = { id: string; groupName: string; names: string[]; creat
     /** Heat length the customer chose (10 or 20). */
     minutes?: number;
     /** Check-in from the customer's phone (?join): last digits of the phone or ID number, and the cloud check-in id (stops a check-in being added twice). */
-    phone?: string; idTail?: string; checkinId?: number };
+    phone?: string; idTail?: string; checkinId?: number;
+    /** Salted fingerprint of the customer's ID number (never the number): their rides are filed under it. Staff only, never published. */
+    idHash?: string };
 
 export type Entry = { groupId: string; count: number };
 export type HeatStatus = 'draft' | 'approved' | 'done';
@@ -1021,7 +1023,7 @@ export const markPaidAndPlan = (core: Core, subId: string, now: number, opts: { 
 };
 
 /** Phone check-ins from the QR page become pending registrations at the cashier (same as the form). Already-added ids are skipped. */
-export function addCheckins(core: Core, rows: { id: number; at: string; phone?: string; tz_tail?: string | null; names: string[]; minutes: number }[]): Core {
+export function addCheckins(core: Core, rows: { id: number; at: string; phone?: string; tz_tail?: string | null; id_hash?: string | null; names: string[]; minutes: number }[]): Core {
     let c = core;
     for (const r of rows) {
         if ((c.submissions ?? []).some(x => x.checkinId === r.id)) continue;
@@ -1029,7 +1031,7 @@ export function addCheckins(core: Core, rows: { id: number; at: string; phone?: 
         const label = r.names.length > 1 ? `${first} +${r.names.length - 1}` : first;
         const res = submitForm(c, label || 'הרשמה מהטלפון', r.names, Date.parse(r.at) || Date.now(), undefined, r.minutes);
         if (!res.id) continue;
-        c = { ...res.core, submissions: (res.core.submissions ?? []).map(x => (x.id === res.id ? { ...x, ...(r.phone ? { phone: r.phone } : {}), ...(r.tz_tail ? { idTail: r.tz_tail } : {}), checkinId: r.id } : x)) };
+        c = { ...res.core, submissions: (res.core.submissions ?? []).map(x => (x.id === res.id ? { ...x, ...(r.phone ? { phone: r.phone } : {}), ...(r.tz_tail ? { idTail: r.tz_tail } : {}), ...(r.id_hash ? { idHash: r.id_hash } : {}), checkinId: r.id } : x)) };
     }
     return c;
 }
@@ -1065,6 +1067,26 @@ export function myStatus(core: Core, hist: Result[], checkinId: number): MyStatu
     if (h.called) return { kind: 'called', ...base };
     const q = queueOf(core);
     return { kind: 'queued', ...base, ahead: Math.max(0, q.findIndex(x => x.id === h.id)) };
+}
+
+/** A finished ride of a customer who checked in with their ID: saved to the cloud so they see best lap and history. */
+export type Ride = { id: string; id_hash: string; at: string; heat_num: number; minutes: number | null; kart: number; pos: number; of_n: number; best_ms: number | null; laps: number; total_ms: number };
+/** Rides in a finished heat for drivers who checked in with their ID. Uses the core from before the heat was closed. */
+export function ridesOf(core: Core, heat: Heat | null | undefined, res: Result): Ride[] {
+    if (!heat) return [];
+    const drivers = driversOf(core, heat);
+    const out: Ride[] = [];
+    for (const s of core.submissions ?? []) {
+        if (!s.idHash || s.status !== 'paid') continue;
+        const gids = s.groupIds ?? (s.groupId ? [s.groupId] : []);
+        const d = drivers.find(x => gids.includes(x.groupId));
+        if (!d) continue;
+        const row = res.rows.find(r => r.kart === d.kart) ?? res.rows.find(r => r.label === d.label);
+        if (!row) continue;
+        out.push({ id: `${res.heatId}-${res.at}-${s.idHash.slice(0, 16)}`, id_hash: s.idHash, at: new Date(res.at).toISOString(), heat_num: res.heatNum,
+            minutes: res.minutes ?? null, kart: row.kart, pos: row.pos, of_n: res.rows.length, best_ms: row.best, laps: row.laps.length, total_ms: row.total });
+    }
+    return out;
 }
 
 /** Drop a pending submission (customer left, duplicate...). Paid ones are handled as groups. */

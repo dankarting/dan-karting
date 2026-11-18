@@ -18,7 +18,7 @@ function JoinLogo() {
     return ok ? <img className="join-logo" src={LOGO_SRC} alt="Dan Karting" onError={() => setOk(false)} /> : <div className="join-word">DAN KARTING</div>;
 }
 
-type Step = 'id' | 'who' | 'me';
+type Step = 'id' | 'who' | 'me' | 'hist';
 
 export function JoinPage() {
     const [me, setMe] = useState<Me | null>(() => readMe());
@@ -31,10 +31,20 @@ export function JoinPage() {
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
     const [sent, setSent] = useState<string[]>([]);
+    const [hist, setHist] = useState<Cloud.MyRides | null>(null);
     const idRef = useRef<HTMLInputElement>(null);
     useEffect(() => { idRef.current?.focus(); }, []);
 
-    const reset = () => { setStep('id'); setTz(''); setSaved([]); setPick([]); setFresh(['']); setMinutes(10); setErr(''); setSent([]); };
+    const reset = () => { setStep('id'); setTz(''); setSaved([]); setPick([]); setFresh(['']); setMinutes(10); setErr(''); setSent([]); setHist(null); };
+    // Customers' area: best lap and rides by ID number. The number stays in this page's memory only (gone on reload).
+    const openHist = async () => {
+        if (!Cloud.validTz(tz)) { setErr('מספר תעודת הזהות לא תקין. בדקו את כל 9 הספרות.'); return; }
+        setBusy(true); setErr('');
+        const r = await Cloud.myRides(tz);
+        setBusy(false);
+        if (typeof r === 'string') { setErr(r); return; }
+        setHist(r); setStep('hist');
+    };
 
     const next = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -67,7 +77,8 @@ export function JoinPage() {
                     value={tz} onChange={e => { setErr(''); setTz(e.target.value.replace(/\D/g, '').slice(0, 9)); }} />
             </label>
             {err && <p className="err" role="alert">{err}</p>}
-            <button type="submit" className="kb primary join-go" disabled={busy}>{busy ? 'בודק…' : 'המשך'}</button>
+            <button type="submit" className="kb primary join-go" disabled={busy}>{busy ? 'בודק…' : 'הרשמה למקצה'}</button>
+            <button type="button" className="kb ghost join-go join-hist-btn" disabled={busy} onClick={() => void openHist()}>🏆 הזמנים וההיסטוריה שלי</button>
             <p className="join-small">מספר הזהות לא נשמר אצלנו, רק משמש לזהות אתכם בפעם הבאה.</p>
         </form>}
 
@@ -80,19 +91,27 @@ export function JoinPage() {
                     <input className="inp join-name" value={fresh[0] ?? ''} maxLength={24} placeholder="שם מלא" aria-label="שם מלא" autoFocus
                         onChange={e => { setErr(''); setFresh([e.target.value]); }} />
                 </>}
+            <div className="join-min"><span className="flabel">אורך המקצה</span>
+                <div className="chips" role="radiogroup" aria-label="אורך המקצה">
+                    {[10, 20].map(m => <button key={m} type="button" role="radio" aria-checked={minutes === m} className={`chip join-chip${minutes === m ? ' sel' : ''}`} onClick={() => setMinutes(m)}>{m} דקות</button>)}
+                </div>
+            </div>
             {err && <p className="err" role="alert">{err}</p>}
             <button type="button" className="kb primary join-go" disabled={busy} onClick={() => void submit()}>{busy ? 'שולח…' : 'שליחה'}</button>
             <button type="button" className="kb ghost sm" onClick={reset}>{saved.length ? 'זה לא אני' : 'חזרה'}</button>
         </div>}
 
-        {step === 'me' && me && <MyArea me={me} fresh={sent.length > 0} onLeave={() => { saveMe(null); setMe(null); reset(); }} />}
+        {step === 'me' && me && <MyArea me={me} fresh={sent.length > 0} onLeave={() => { saveMe(null); setMe(null); reset(); }}
+            onHist={tz ? () => void openHist() : () => { setStep('id'); setErr(''); }} />}
+
+        {step === 'hist' && hist && <MyHistory h={hist} onBack={() => { if (me) setStep('me'); else reset(); }} onOut={reset} />}
     </div>;
 }
 
 const fmtLap = (ms: number | null) => (ms == null ? '—' : L.fmt(ms));
 
 /** Personal area: where I stand now (follows the public board live), then a way to the customers' area. */
-function MyArea({ me, fresh, onLeave }: { me: Me; fresh: boolean; onLeave: () => void }) {
+function MyArea({ me, fresh, onLeave, onHist }: { me: Me; fresh: boolean; onLeave: () => void; onHist: () => void }) {
     const [board, setBoard] = useState<Cloud.BoardPayload | null>(null);
     useEffect(() => { void Cloud.fetchBoard().then(p => { if (p) setBoard(p); }); return Cloud.subscribeBoard(setBoard); }, []);
     const st = board ? L.myStatus(board.core, board.hist ?? [], me.cid) : null;
@@ -121,10 +140,43 @@ function MyArea({ me, fresh, onLeave }: { me: Me; fresh: boolean; onLeave: () =>
                 {st.kind !== 'queued' && <div><span>קארט</span><b>{st.kart}</b></div>}
                 {st.result && <><div><span>מקום</span><b>{st.result.pos}/{st.result.of}</b></div><div><span>הקפה מהירה</span><b dir="ltr">{fmtLap(st.result.best)}</b></div></>}
             </div>}
-            <a className="kb primary join-go join-a" href="./">לאזור הלקוחות: לוח חי ותוצאות</a>
+            <button type="button" className="kb primary join-go" onClick={onHist}>🏆 הזמנים וההיסטוריה שלי</button>
+            <a className="kb ghost join-go join-a" href="./">לוח חי ותוצאות של כולם</a>
             <button type="button" className="join-link" onClick={onLeave}>{first ? `לא ${first}? ` : ''}הרשמה חדשה</button>
         </div>
     </>;
+}
+
+const fmtDay = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? '' : d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: '2-digit' }); };
+const fmtHour = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? '' : d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }); };
+
+/** Customers' area by ID number: my best lap, number of visits and every ride. */
+function MyHistory({ h, onBack, onOut }: { h: Cloud.MyRides; onBack: () => void; onOut: () => void }) {
+    if (!h.known) return <div className="join-card">
+        <h1>עוד לא נסעתם אצלנו</h1>
+        <p className="join-sub">לא מצאנו נסיעות לתעודת הזהות הזו. אחרי שתירשמו כאן ותיסעו, הזמנים יופיעו כאן.</p>
+        <button type="button" className="kb primary join-go" onClick={onOut}>הרשמה למקצה</button>
+    </div>;
+    const rides = h.rides;
+    return <div className="join-card">
+        <h1>האזור שלי</h1>
+        <p className="join-names">{h.name}</p>
+        <div className="my-best"><span>🏆 השיא שלי</span><b dir="ltr">{fmtLap(h.best)}</b></div>
+        <div className="my-facts">
+            <div><span>ביקורים</span><b>{h.visits}</b></div>
+            <div><span>נסיעות</span><b>{rides.length}</b></div>
+            <div><span>ניצחונות</span><b>{rides.filter(r => r.pos === 1).length}</b></div>
+        </div>
+        <h2 className="my-h2">הנסיעות שלי</h2>
+        {rides.length === 0 ? <p className="join-sub">עוד אין נסיעות שמורות. התוצאות נשמרות אחרי כל מקצה.</p>
+            : <ol className="my-rides">{rides.map((r, i) => <li key={i} className={r.best != null && r.best === h.best ? 'pb' : ''}>
+                <div className="mr-when"><b>{fmtDay(r.at)}</b><span>{fmtHour(r.at)}</span></div>
+                <div className="mr-what"><b>{r.heat != null ? `מקצה ${r.heat}` : 'מקצה'}</b><span>{[r.minutes ? `${r.minutes} דק׳` : '', r.kart != null ? `קארט ${r.kart}` : ''].filter(Boolean).join(' · ')}</span></div>
+                <div className="mr-pos">{r.pos != null ? <><b>{r.pos === 1 ? '🥇' : r.pos === 2 ? '🥈' : r.pos === 3 ? '🥉' : r.pos}</b><span>מתוך {r.of}</span></> : null}</div>
+                <div className="mr-best"><b dir="ltr">{fmtLap(r.best)}</b><span>{r.best != null && r.best === h.best ? 'שיא!' : 'הקפה מהירה'}</span></div>
+            </li>)}</ol>}
+        <button type="button" className="kb ghost sm" onClick={onBack}>חזרה</button>
+    </div>;
 }
 
 /** The check-in address (same site, ?join). */

@@ -612,15 +612,38 @@ test('personal area status: pending -> waiting/queued -> called -> racing -> don
     assert.equal(L.myStatus(c, [], 5).kind, 'cancelled');
 });
 
+test('rides: a finished heat files a ride under the ID fingerprint of each checked-in driver', () => {
+    let c = L.addCheckins(L.initialCore(), [
+        { id: 1, at: new Date(1000).toISOString(), tz_tail: '094', id_hash: 'h-a', names: ['אבי'], minutes: 10 },
+        { id: 2, at: new Date(1100).toISOString(), tz_tail: '093', id_hash: 'h-b', names: ['בני'], minutes: 10 },
+        { id: 3, at: new Date(1200).toISOString(), tz_tail: '011', names: ['בלי ת"ז'], minutes: 10 },
+    ]);
+    for (const p of L.pendingOf(c)) c = L.markPaidAndPlan(c, p.id, 2000);
+    const h = c.heats[0];
+    c = L.startHeat(L.approveHeat(c, h.id), h.id, 10_000, 1, 10);
+    const run = L.runningHeat(c);
+    const fin = L.finishRun(c, 10_000 + 10 * 60_000);
+    assert.ok(fin.result);
+    const rides = L.ridesOf(c, run, fin.result!);
+    assert.deepEqual(rides.map(r => r.id_hash).sort(), ['h-a', 'h-b']);
+    for (const r of rides) {
+        const res = fin.result!; const row: L.Result["rows"][number] = res.rows.find(x => x.kart === r.kart)!;
+        assert.equal(r.pos, row.pos); assert.equal(r.best_ms, row.best); assert.equal(r.of_n, fin.result!.rows.length); assert.equal(r.heat_num, h.num);
+    }
+    assert.equal(new Set(rides.map(r => r.id)).size, 2, 'ride ids unique');
+    assert.deepEqual(L.ridesOf(c, run, fin.result!).map(r => r.id), rides.map(r => r.id), 'same heat -> same ids (saved once)');
+});
+
 test('public board: no staff notes, no names of unpaid registrations, check-ins keep only id + status', () => {
     let c = L.addGroup(L.initialCore(), { name: 'קבוצה', size: 2, ticket: 'רגיל', keepTogether: true, note: 'לקוח עצבני' }, 1);
     c = L.submitForm(c, 'טופס', ['סוד אחד'], 2).core;
-    c = L.addCheckins(c, [{ id: 3, at: new Date(5).toISOString(), phone: '0521234567', tz_tail: '094', names: ['שם פרטי'], minutes: 10 }]);
+    c = L.addCheckins(c, [{ id: 3, at: new Date(5).toISOString(), phone: '0521234567', tz_tail: '094', id_hash: 'fp-secret-hash', names: ['שם פרטי'], minutes: 10 }]);
     const b = boardOf(c, 10);
     const txt = JSON.stringify(b);
     assert.ok(!txt.includes('לקוח עצבני'), 'staff note leaked');
     assert.ok(!txt.includes('סוד אחד') && !txt.includes('שם פרטי'), 'unpaid names leaked');
     assert.ok(!txt.includes('0521234567') && !txt.includes('"094"'), 'phone / id digits leaked');
+    assert.ok(!txt.includes('fp-secret-hash'), 'ID fingerprint leaked');
     assert.equal(b.core.submissions!.length, 1); assert.equal(b.core.submissions![0].checkinId, 3);
 });
 

@@ -122,7 +122,7 @@ export function subscribeState(cb: (key: string, row: StateRow<unknown>) => void
 }
 
 // ---------------------------------------------------------------- customer check-in (?join, docs/checkin-id.sql + docs/security.sql)
-export type CheckinRow = { id: number; at: string; phone?: string; tz_tail?: string | null; names: string[]; minutes: number };
+export type CheckinRow = { id: number; at: string; phone?: string; tz_tail?: string | null; id_hash?: string | null; names: string[]; minutes: number };
 
 // ---- ID number (ת"ז) check-in: the number goes to the database functions only; they keep a salted fingerprint, never the number.
 /** Israeli ID check digit (9 digits, shorter numbers padded with zeros). */
@@ -152,6 +152,23 @@ export async function checkinSubmitId(tz: string, pick: number[], fresh: string[
     if (m.includes('no names')) return 'צריך לפחות שם אחד';
     if (m.includes('too many')) return 'יותר מדי שמות בהרשמה אחת. פנו לקופה.';
     return 'ההרשמה לא נשלחה. נסו שוב או פנו לקופה.';
+}
+/** Staff: file finished rides under the customers' ID fingerprints (saving the same heat twice adds nothing). */
+export async function saveRides(rows: L.Ride[]): Promise<string | null> {
+    if (rows.length === 0) return null;
+    const { error } = await supabase.from('rides').upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+    return error ? error.message : null;
+}
+export type MyRide = { at: string; heat: number | null; minutes: number | null; kart: number | null; pos: number | null; of: number | null; best: number | null; laps: number | null };
+export type MyRides = { known: false } | { known: true; name: string; visits: number; best: number | null; rides: MyRide[] };
+/** Customers' area: my best lap and rides, by my ID number. A string is an error to show. */
+export async function myRides(tz: string): Promise<MyRides | string> {
+    const { data, error } = await supabase.rpc('my_rides', { p_tz: tzOf(tz) });
+    if (!error && data) return data as MyRides;
+    const m = error?.message || '';
+    if (m.includes('bad id')) return 'מספר תעודת הזהות לא תקין';
+    if (m.includes('busy')) return 'יש עומס כרגע. נסו שוב בעוד דקה.';
+    return 'אין חיבור כרגע. נסו שוב.';
 }
 /** Is the signed-in account on the staff list? null = could not check (offline, or docs/security.sql not run yet). */
 export async function amStaff(): Promise<boolean | null> {
